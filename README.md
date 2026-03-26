@@ -1,12 +1,10 @@
 # Knative-O — Serverless Application Observability (Project Type 1)
 
 **Authors:**
-- [Name Surname 1]
-- [Name Surname 2]
-- [Name Surname 3]
-- [Name Surname 4]
-
-**Programme:** Computer Science, MSc, Semester 1
+- Stanisław Barycki
+- Eryk Olejarz
+- Paweł Prus
+- Kacper Szot
 
 ---
 
