@@ -8,7 +8,7 @@
 
 ---
 
-## 📝 Project Description
+## Project Description
 
 The goal of this project is to demonstrate **LLM-driven deployment and management** of a serverless microservice application running on **Knative**, with a full observability pipeline built on **OpenTelemetry**, **Prometheus**, and **Grafana**.
 
@@ -74,7 +74,7 @@ OpenTelemetry collects telemetry (traces, metrics, logs) from both the applicati
 
 ## 3. Case Study Concept
 
-### 🎯 Project Goals
+### Project Goals
 
 - **LLM-driven Knative management:** Deploy and configure serverless applications using natural-language prompts instead of manual YAML/kubectl.
 - **Full observability pipeline:** Instrument the application with OpenTelemetry, collect metrics with Prometheus, visualize with Grafana.
