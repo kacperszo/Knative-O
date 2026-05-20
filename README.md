@@ -70,7 +70,7 @@ The [Kubernetes MCP Server](https://github.com/containers/kubernetes-mcp-server)
 
 OpenTelemetry collects telemetry (traces, metrics, logs) from both the application and Knative infrastructure via the OTel Collector. Prometheus stores time-series metrics and serves as the data source for Grafana, which provides the visualization layer. The `knative-extensions/monitoring` repository offers ready-made Grafana dashboards for Knative.
 
-### 2.1 Technology Decisions for the Demo *(corresponds to point 4 of the project document — "Ustalenie technologii realizacji Demo")*
+### 2.1 Technology Decisions for the Demo
 
 Below is the rationale behind each technology chosen for the demo, including the alternatives considered and the reason for rejection. The selection is driven by three constraints: (1) the demo must run on a single laptop-grade Kubernetes cluster, (2) every component must expose telemetry that can be visualized end-to-end, and (3) the LLM must be able to drive the cluster through a documented, vendor-neutral protocol.
 
@@ -91,7 +91,7 @@ Below is the rationale behind each technology chosen for the demo, including the
 
 ---
 
-## 3. Case Study Concept *(corresponds to point 3 of the project document — "Opis Demo")*
+## 3. Case Study Concept
 
 ### 3.1 Project Goals
 
@@ -188,7 +188,7 @@ The LLM communicates **only with the Application layer** through the MCP Server.
 
 ---
 
-## 6. Environment Configuration *(corresponds to point 5 of the project document — "Opis konfiguracji")*
+## 6. Environment Configuration
 
 This section describes the concrete configuration of every component needed to reproduce the demo. We document **two deployment targets**: a local single-node cluster (the default for the live demo) and a managed cloud cluster (a fallback / scale-up variant). All YAML/Helm values are kept in the repository so the environment is fully declarative.
 
