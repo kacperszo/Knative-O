@@ -1,1 +1,33 @@
 .vscode/
+.idea/
+
+# Secrets and local config
+.env
+.env.local
+*.kubeconfig
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+
+# Helm / kubectl
+charts/
+*.tgz
+kubeconfig-*
+
+# Fetched at bootstrap time (upstream Astronomy Shop manifest)
+deploy/astronomy-shop/base.yaml
+
+# OS
+.DS_Store
+Thumbs.db

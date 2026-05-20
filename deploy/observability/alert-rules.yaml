@@ -1,0 +1,90 @@
+# Alerts that the closed-loop agent reacts to (§5.4, scenario #7).
+# Mounted by Prometheus via the kube-prometheus-stack ruleSelector.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: knative-o-agent-rules
+  namespace: monitoring
+  labels:
+    # picked up by Prometheus through the default ruleSelector
+    prometheus: prom
+    role: alert-rules
+spec:
+  groups:
+    - name: knative-revisions
+      interval: 30s
+      rules:
+        - alert: HighRequestLatency
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum by (le, configuration_name, revision_name, namespace_name) (
+                rate(revision_request_latencies_bucket[2m])
+              )
+            ) > 1.0
+          for: 2m
+          labels:
+            severity: warning
+            channel: agent
+          annotations:
+            summary: "High p95 request latency on {{ $labels.configuration_name }}"
+            description: >-
+              p95 latency on revision {{ $labels.revision_name }}
+              (namespace {{ $labels.namespace_name }}) is {{ $value }}s,
+              above the 1s SLO for 2m.
+            remediation_hint: >-
+              Consider increasing autoscaling.knative.dev/max-scale and
+              lowering autoscaling.knative.dev/target.
+
+        - alert: KnativeRevisionErrorRate
+          expr: |
+            sum by (configuration_name, revision_name, namespace_name) (
+              rate(revision_request_count{response_code_class!~"2..|3.."}[2m])
+            )
+            /
+            sum by (configuration_name, revision_name, namespace_name) (
+              rate(revision_request_count[2m])
+            ) > 0.05
+          for: 2m
+          labels:
+            severity: warning
+            channel: agent
+          annotations:
+            summary: "Error rate >5% on {{ $labels.configuration_name }}"
+            description: >-
+              Revision {{ $labels.revision_name }} is returning 4xx/5xx for
+              more than 5% of requests over the last 2 minutes.
+            remediation_hint: >-
+              Roll back to the previous revision if the error appeared after
+              a recent rollout.
+
+        - alert: KnativeActivatorBackpressure
+          expr: |
+            sum by (namespace) (rate(activator_request_count[1m])) > 50
+            and
+            sum by (namespace) (activator_request_concurrency) > 20
+          for: 1m
+          labels:
+            severity: warning
+            channel: agent
+          annotations:
+            summary: "Activator backpressure in {{ $labels.namespace }}"
+            description: >-
+              Activator is queueing requests because the data plane is not
+              scaling out fast enough.
+            remediation_hint: >-
+              Bump min-scale on the affected revision or raise max-scale.
+
+    - name: pods
+      rules:
+        - alert: PodOOMKilled
+          expr: |
+            increase(kube_pod_container_status_terminated_reason{reason="OOMKilled"}[5m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+            channel: agent
+          annotations:
+            summary: "Pod {{ $labels.pod }} OOMKilled in {{ $labels.namespace }}"
+            description: "Container {{ $labels.container }} was killed for exceeding its memory limit."
+            remediation_hint: "Raise memory limit on the Deployment/Service or check for a leak."

@@ -1,0 +1,63 @@
+# Replaces the upstream `frontend` Deployment + Service with a Knative
+# Service that wraps the same container. Kustomize's `$patch: delete`
+# removes the Deployment; the Knative Service below creates Deployment +
+# Service + Route under the hood.
+$patch: delete
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+---
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: astronomy-shop
+  annotations:
+    # Keep one warm replica during the live demo so the first request isn't a
+    # cold start — scenario #4 explicitly turns this off for `payment`.
+    autoscaling.knative.dev/min-scale: "1"
+    autoscaling.knative.dev/max-scale: "10"
+    autoscaling.knative.dev/target: "100"
+    autoscaling.knative.dev/metric: concurrency
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/window: "60s"
+    spec:
+      containerConcurrency: 100
+      timeoutSeconds: 30
+      containers:
+        - name: frontend
+          image: ghcr.io/open-telemetry/demo:1.13.0-frontend
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: FRONTEND_PORT
+              value: "8080"
+            - name: AD_SERVICE_ADDR
+              value: ad:8080
+            - name: CART_SERVICE_ADDR
+              value: cart:8080
+            - name: CHECKOUT_SERVICE_ADDR
+              value: checkout:8080
+            - name: CURRENCY_SERVICE_ADDR
+              value: currency.astronomy-shop.svc.cluster.local
+            - name: PRODUCT_CATALOG_SERVICE_ADDR
+              value: productcatalog:8080
+            - name: RECOMMENDATION_SERVICE_ADDR
+              value: recommendation:8080
+            - name: SHIPPING_SERVICE_ADDR
+              value: shipping:8080
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel.opentelemetry.svc.cluster.local:4318
+            - name: OTEL_SERVICE_NAME
+              value: frontend
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: service.namespace=astronomy-shop
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }

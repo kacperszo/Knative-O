@@ -1,0 +1,26 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: knative-o
+# kind defaults to the latest Kubernetes node image bundled with the kind
+# binary; pin a specific minor by setting `image:` on each node if you need
+# reproducibility. We track latest stable supported by Knative (see §6.1).
+nodes:
+  - role: control-plane
+    # Forward host ports to the kind node so Kourier is reachable at
+    # http://*.127.0.0.1.nip.io without a separate LoadBalancer.
+    extraPortMappings:
+      - containerPort: 31080
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 31443
+        hostPort: 443
+        protocol: TCP
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+  - role: worker
+  - role: worker
+  - role: worker

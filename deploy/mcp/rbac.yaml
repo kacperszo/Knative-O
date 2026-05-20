@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: langchain-agent
+  namespace: mcp
+---
+# Read everywhere — the agent needs cluster-wide visibility to diagnose.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: knative-o-agent-read
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - nodes
+      - pods
+      - pods/log
+      - services
+      - endpoints
+      - configmaps
+      - events
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["serving.knative.dev"]
+    resources: ["services", "revisions", "routes", "configurations"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["eventing.knative.dev", "messaging.knative.dev", "sources.knative.dev"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling.internal.knative.dev"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: knative-o-agent-read
+subjects:
+  - kind: ServiceAccount
+    name: langchain-agent
+    namespace: mcp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: knative-o-agent-read
+---
+# Write — restricted to the demo namespace and Knative serving APIs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: knative-o-agent-write
+  namespace: astronomy-shop
+rules:
+  - apiGroups: ["serving.knative.dev"]
+    resources: ["services", "routes", "configurations"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["serving.knative.dev"]
+    resources: ["revisions"]
+    # No delete on revisions — Knative manages their lifecycle from Configurations.
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: knative-o-agent-write-binding
+  namespace: astronomy-shop
+subjects:
+  - kind: ServiceAccount
+    name: langchain-agent
+    namespace: mcp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: knative-o-agent-write

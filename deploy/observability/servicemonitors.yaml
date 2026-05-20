@@ -1,0 +1,62 @@
+---
+# Scrape Knative Serving control plane.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: knative-serving
+  namespace: monitoring
+  labels:
+    prometheus: prom
+spec:
+  namespaceSelector:
+    matchNames: ["knative-serving"]
+  selector:
+    matchExpressions:
+      - { key: app, operator: In, values: [activator, autoscaler, controller, webhook] }
+  endpoints:
+    - port: http-metrics
+      interval: 15s
+    - port: metrics
+      interval: 15s
+---
+# Scrape queue-proxy sidecars (per-revision request metrics).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: queue-proxy
+  namespace: monitoring
+  labels:
+    prometheus: prom
+spec:
+  namespaceSelector:
+    matchNames: ["astronomy-shop"]
+  selector:
+    matchLabels:
+      serving.knative.dev/revisionUID: "" # match any
+    matchExpressions:
+      - { key: serving.knative.dev/revisionUID, operator: Exists }
+  podMetricsEndpoints:
+    - port: http-usermetric
+      interval: 15s
+      path: /metrics
+---
+# Scrape the OTel Collector's Prometheus exporter (app metrics) and its
+# own self-metrics.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: otel-collector
+  namespace: monitoring
+  labels:
+    prometheus: prom
+spec:
+  namespaceSelector:
+    matchNames: ["opentelemetry"]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: otel-collector
+  endpoints:
+    - port: prometheus
+      interval: 15s
+    - port: monitoring
+      interval: 30s

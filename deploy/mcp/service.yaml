@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: langchain-agent
+  namespace: mcp
+spec:
+  selector:
+    app.kubernetes.io/name: langchain-agent
+  ports:
+    - name: webhook
+      port: 8080
+      targetPort: webhook
