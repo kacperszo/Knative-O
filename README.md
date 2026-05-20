@@ -133,6 +133,7 @@ The demo is structured as a single, narrated session in which the operator types
 | 4 | **Scale-to-zero proof** | "Stop traffic to `payment` and show me when it scales to zero." | Pauses the load generator for that service, watches pod count. | *Active pods* panel drops to 0 after the grace period; first cold request shows the activator's TTFB spike. |
 | 5 | **Diagnosis** | "Why is the cart service failing?" | Reads pod status, recent events, last log lines through MCP; suggests a fix (e.g. wrong env var). | Trace waterfall in Grafana shows the failing span; LLM proposes a patch that the operator applies. |
 | 6 | **Rollback** | "Roll back `recommendation` to the previous revision." | Patches `Service` traffic to 100 % on previous revision. | Traffic shifts back; error-rate panel returns to baseline within seconds. |
+| 7 | **Reactive autoscale (closed-loop)** | *(no operator prompt — triggered by Alertmanager)* | Alert `HighRequestLatency` on `frontend` fires → webhook wakes the LangChain agent → LLM inspects current `maxScale` and concurrency, raises `maxScale` and lowers concurrency target via MCP. | Alert clears in Grafana; pod count and latency panels show the LLM's intervention; the agent posts a short justification to the transcript. |
 
 ### 3.4 Acceptance Criteria
 
@@ -154,28 +155,33 @@ The demo is considered successful when, during a single live run:
 
 ```mermaid
 graph TD
+    USER([Operator])
     LLM["LLM<br/>Claude / ChatGPT / Cursor"]
-    LC[LangChain]
+    LC[LangChain agent]
     MCP["MCP Server<br/>(Kubernetes)"]
     APP["Application<br/>Knative Serving + Eventing"]
-    OBS["Observability<br/>OpenTelemetry + Prometheus"]
+    OBS["Observability<br/>OpenTelemetry + Prometheus<br/>+ Alertmanager"]
     VIS["Visualization<br/>Grafana (OSS / Cloud)"]
 
+    USER -- prompt --> LLM
     LLM <--> LC
-    LLM --> MCP
-    MCP --> APP
-    APP --> OBS
+    LC -- tool calls --> MCP
+    MCP -- kubectl / Knative API --> APP
+    APP -- metrics / traces / logs --> OBS
     OBS --> VIS
+    OBS -- alerts / events<br/>webhook --> LC
 ```
 
-The LLM communicates **only with the Application layer** through the MCP Server. The observability and visualization layers operate independently — collecting and displaying telemetry emitted by the application and Knative components.
+The system is a **closed loop**: the LLM acts on the cluster through the MCP Server, the Application emits telemetry to the Observability layer, and the Observability layer feeds events back to the LLM agent so it can react autonomously (e.g. scale up a saturated revision, roll back a bad deployment, or surface a diagnosis without waiting for a human prompt).
 
 **Data flow:**
-1. User sends a natural-language prompt to the LLM.
-2. LLM generates an operation plan; LangChain routes it to the Kubernetes MCP Server.
-3. MCP Server executes the operation on the Knative/Kubernetes cluster.
-4. Knative Services and components emit telemetry → OpenTelemetry Collector → Prometheus.
-5. Grafana dashboards visualize the collected metrics and traces.
+1. **Operator → LLM:** the user sends a natural-language prompt to the LLM (open-loop trigger).
+2. **LLM → Cluster:** the LLM generates a plan; LangChain calls the Kubernetes MCP Server, which applies changes via the Knative / Kubernetes API.
+3. **Cluster → Observability:** Knative Services and control-plane components emit telemetry via the OpenTelemetry Collector to Prometheus (metrics), Tempo/Zipkin (traces), and optionally Loki (logs).
+4. **Observability → Grafana:** dashboards visualize the collected signals for the human operator.
+5. **Observability → LLM (feedback loop):** Alertmanager rules and event subscriptions push notifications (high latency, error-rate spikes, scale-to-zero unreachable, OOMKill) to a webhook handled by the LangChain agent, which re-invokes the LLM with the alert as context. The LLM proposes a remediation, the operator confirms (or in autonomous mode the agent applies it directly through MCP), and the loop closes.
+
+This makes the LLM both an **operator-facing assistant** (step 1) and a **reactive controller** (step 5) — and Grafana is the place where both modes are verified.
 
 ---
 
@@ -299,6 +305,13 @@ Environment variables consumed by the runner:
 | `LANGCHAIN_TRACING_V2` / `LANGCHAIN_API_KEY` | Optional: capture agent traces in LangSmith for the report |
 
 A small system prompt pins the LLM to: Knative APIs only, the demo namespace, a refusal policy for destructive cluster-wide actions, and a requirement to echo the YAML it is about to apply before applying it (so the operator can veto).
+
+**Closed-loop feedback (Observability → LLM).** The LangChain runner exposes an HTTP webhook (`/alerts`) that **Alertmanager** posts to whenever a rule fires (`HighRequestLatency`, `KnativeRevisionErrorRate`, `KnativeActivatorBackpressure`, `PodOOMKilled`, …). The webhook enqueues the alert as a new turn in the agent's conversation, prefixed with a synthetic operator message ("Alert fired: \<name\>, summary: \<…\>, suggested SLO breach: \<…\>. Decide whether and how to remediate."). The agent then runs the same tool-use loop as in the prompt-driven flow, except (a) it is restricted to a smaller `remediation` tool subset (scale, patch traffic, rollback — no create/delete), and (b) it runs in one of two modes set per environment:
+
+- `confirm` mode (default for the live demo): the LLM proposes the patch, the operator presses Enter to apply.
+- `auto` mode (used in scenario #7): the agent applies the patch directly, then writes a one-line justification to the transcript and posts a Slack/console notification.
+
+The same rate-limit and audit log apply in both modes — every MCP call is logged with the alert that triggered it, so the closed loop is fully traceable.
 
 ### 6.6 Networking
 
