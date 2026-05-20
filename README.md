@@ -152,29 +152,20 @@ The demo is considered successful when, during a single live run:
 
 ## 4. High-Level Architecture
 
-```
-        ┌───────────────────┐
-        │  Claude / ChatGPT  │
-        │  Cursor / ...      │
-        │                    │◄──── LangChain
-        │       LLM          │
-        └────────┬───────────┘
-                 │
-         ┌───────▼───────┐
-         │  MCP Server   │
-         │  (Kubernetes) │
-         └───────┬───────┘
-                 │
-                 ▼
-┌───────────────────┐   ┌─────────────────┐   ┌──────────────────────┐
-│                   │   │                 │   │                      │
-│   Application     │──▶│  Observability  │──▶│   Visualization      │
-│                   │   │                 │   │                      │
-│  Knative          │   │  Prometheus     │   │  Grafana (OSS)       │
-│  (Serving +       │   │  OpenTelemetry  │   │  Grafana Cloud       │
-│   Eventing)       │   │  ...            │   │  Grafana Assistance  │
-│                   │   │                 │   │  ...                 │
-└───────────────────┘   └─────────────────┘   └──────────────────────┘
+```mermaid
+graph TD
+    LLM["LLM<br/>Claude / ChatGPT / Cursor"]
+    LC[LangChain]
+    MCP["MCP Server<br/>(Kubernetes)"]
+    APP["Application<br/>Knative Serving + Eventing"]
+    OBS["Observability<br/>OpenTelemetry + Prometheus"]
+    VIS["Visualization<br/>Grafana (OSS / Cloud)"]
+
+    LLM <--> LC
+    LLM --> MCP
+    MCP --> APP
+    APP --> OBS
+    OBS --> VIS
 ```
 
 The LLM communicates **only with the Application layer** through the MCP Server. The observability and visualization layers operate independently — collecting and displaying telemetry emitted by the application and Knative components.
@@ -273,13 +264,15 @@ Per-service knobs (set via annotations and exercised by demo scenario #3):
 
 **OpenTelemetry** — installed via the `opentelemetry-operator` Helm chart. A single `OpenTelemetryCollector` CR in `Deployment` mode (with a `DaemonSet` sidecar for node-level metrics) receives OTLP from app SDKs and from Knative's tracing exporter, then fans out:
 
-```
-OTLP (gRPC :4317 / HTTP :4318)
-        │
-        ▼
-  OTel Collector ──► Prometheus  (metrics, via /metrics scrape)
-                ──► Tempo/Zipkin (traces — Tempo in cloud, in-cluster Zipkin locally)
-                ──► Loki         (optional, logs — out of scope for the demo)
+```mermaid
+graph LR
+    A["App SDKs + Knative tracing<br/>OTLP gRPC :4317 / HTTP :4318"] --> C[OTel Collector]
+    C -->|metrics, /metrics scrape| P[(Prometheus)]
+    C -->|traces| T[(Tempo / Zipkin<br/>Tempo in cloud, Zipkin locally)]
+    C -.->|logs, optional - out of scope| L[(Loki)]
+    P --> G[Grafana]
+    T --> G
+    L -.-> G
 ```
 
 **Prometheus** — `kube-prometheus-stack` Helm chart, scrape interval `15s`, retention `2h` locally / `7d` in cloud. `ServiceMonitor`s are pre-created for `knative-serving`, `knative-eventing`, `kourier`, the OTel Collector and the Astronomy Shop services.
