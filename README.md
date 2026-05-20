@@ -197,14 +197,18 @@ This section describes the concrete configuration of every component needed to r
 
 | Resource | Local (default) | Cloud (variant) |
 |----------|-----------------|-----------------|
-| Cluster | **kind** v0.24+ (single node, 4 workers) | **GKE / EKS / AKS**, 3× `e2-standard-4` (or equivalent) |
+| Cluster | **kind** v0.25+ (single node, 4 workers) | **GKE / EKS / AKS**, 3× `e2-standard-4` (or equivalent) |
 | CPU / RAM | ≥ 6 vCPU / 16 GB RAM on the host | 3× 4 vCPU / 16 GB |
-| Disk | 40 GB free for images + Prometheus TSDB | 100 GB SSD PD per node |
-| Kubernetes | v1.30.x | v1.30.x (matching managed channel) |
+| Disk | ~20 GB free (Astronomy Shop images dominate; Prometheus TSDB at 2 h retention is < 1 GB) | 50 GB standard PD per node |
+| Kubernetes | latest stable supported by Knative (currently **v1.33.x**) | same — `regular`/`stable` channel of the managed offering |
 | Container runtime | containerd (bundled with kind) | containerd (managed) |
 | Ingress / DNS | `kourier` + `nip.io` magic DNS | Cloud LB + managed DNS zone |
 | OS (host) | Linux/macOS, Docker ≥ 24 | n/a (managed) |
 | CLI tools | `kubectl`, `helm` ≥ 3.14, `kn` (Knative CLI), `kind`, `python` ≥ 3.11 | + cloud-vendor CLI (`gcloud`/`aws`/`az`) |
+
+> **Why not pin to a single version?** We track the **latest stable Kubernetes that Knative officially supports** (see Knative's compatibility matrix). At the time of writing that means K8s 1.33 with Knative 1.19; updating Knative quarterly will follow new K8s minors automatically. We deliberately avoid pinning to an older minor — it would force us to use an EOL'd Knative release with known CVEs and outdated dashboards.
+>
+> **Disk budget breakdown (local).** Astronomy Shop pulls ~8–10 GB of polyglot images (JVM, .NET, Go, Node, Python, Rust, Ruby, PHP); kind + control-plane images ~2 GB; observability stack (Prometheus + Grafana + OTel Collector + Tempo) ~2 GB; Prometheus TSDB at 2 h retention < 1 GB. ~20 GB free is enough; the previous 40 GB was a safety margin that's not needed for a short demo.
 
 ### 6.2 Cluster Layout
 
@@ -234,7 +238,7 @@ metadata:
   name: knative-serving
   namespace: knative-serving
 spec:
-  version: "1.15"
+  version: "1.19"
   ingress:
     kourier:
       enabled: true
