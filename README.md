@@ -187,6 +187,160 @@ This makes the LLM both an **operator-facing assistant** (step 1) and a **reacti
 
 ## 5. Detailed Architecture
 
+The high-level picture in §4 hides the boundaries between layers. This section zooms in on the actual processes, ports, and protocols so that the install steps in §7 line up with something concrete.
+
+### 5.1 Component Map
+
+```mermaid
+graph TB
+    subgraph Operator
+        IDE["Operator UI<br/>Cursor / Claude Desktop / CLI"]
+    end
+
+    subgraph "Agent runtime (namespace: mcp)"
+        AGENT["LangChain agent<br/>(Python)"]
+        WH["Webhook receiver<br/>POST /alerts"]
+        MCP["kubernetes-mcp-server<br/>(stdio / SSE)"]
+    end
+
+    subgraph "Knative (namespaces: knative-serving / knative-eventing)"
+        ACT[Activator]
+        AS[Autoscaler]
+        QP[queue-proxy sidecar]
+        REV["Revision pods<br/>(user container)"]
+    end
+
+    subgraph "Ingress (namespace: kourier-system)"
+        KOU[Kourier gateway]
+    end
+
+    subgraph "Workload (namespace: astronomy-shop)"
+        FE["frontend (knative Service)"]
+        PC["product-catalog (knative Service)"]
+        REC["recommendation (knative Service)"]
+        CUR["currency (knative Service)"]
+        PAY["payment (knative Service)"]
+        STATE["Deployments:<br/>kafka, valkey, postgres, flagd"]
+    end
+
+    subgraph "Observability (namespaces: opentelemetry / monitoring)"
+        OTEL[OTel Collector]
+        PROM[(Prometheus)]
+        TEMPO[(Tempo / Zipkin)]
+        AM[Alertmanager]
+        GRAF[Grafana]
+    end
+
+    IDE <-->|MCP protocol| AGENT
+    AGENT <--> MCP
+    MCP -->|HTTPS :443<br/>Kubernetes API| ACT
+    MCP --> KOU
+    KOU --> ACT
+    ACT --> QP --> REV
+    AS -.->|scrapes :9090<br/>queue-proxy metrics| QP
+    AS -.->|patches Deployment| REV
+    REV -->|OTLP :4317| OTEL
+    QP -->|/metrics| PROM
+    OTEL -->|remote_write| PROM
+    OTEL -->|OTLP| TEMPO
+    PROM --> AM
+    AM -->|HTTP POST| WH
+    WH --> AGENT
+    PROM --> GRAF
+    TEMPO --> GRAF
+    AM --> GRAF
+```
+
+### 5.2 Process Inventory
+
+| Layer | Process | Image | Ports | Notes |
+|-------|---------|-------|-------|-------|
+| Agent | `langchain-agent` | custom (Python 3.11 slim) | `:8080` (webhook) | Single replica; holds the conversation state in-memory plus optional LangSmith sink. |
+| Agent | `kubernetes-mcp-server` | `ghcr.io/containers/kubernetes-mcp-server` | stdio (or `:8000` SSE) | Sidecar of the agent or standalone Deployment depending on transport. |
+| Knative | `controller`, `webhook`, `autoscaler`, `activator` | `gcr.io/knative-releases/...` | `:8443` (webhook), `:9090` (metrics) | Installed by the Knative Operator. |
+| Knative DP | `queue-proxy` sidecar | injected | `:8012` (user proxy), `:9090` (metrics), `:9091` (request stats) | One per Revision pod; bridges between Kourier and the user container, emits per-request stats consumed by the autoscaler. |
+| Ingress | `3scale-kourier-gateway` | `gcr.io/knative-releases/.../kourier` | `:80`, `:443` | NodePort on kind, LoadBalancer in cloud. |
+| Observability | `otel-collector` | `otel/opentelemetry-collector-contrib` | `:4317` (OTLP gRPC), `:4318` (OTLP HTTP), `:8888` (collector self-metrics) | Deployment mode, plus a DaemonSet for host metrics. |
+| Observability | `prometheus` | `quay.io/prometheus/prometheus` | `:9090` | From `kube-prometheus-stack`. |
+| Observability | `alertmanager` | `quay.io/prometheus/alertmanager` | `:9093` | Webhook receiver points at `http://langchain-agent.mcp:8080/alerts`. |
+| Observability | `tempo` (cloud) / `zipkin` (local) | `grafana/tempo` / `openzipkin/zipkin` | `:3200` / `:9411` | Trace store; chosen per environment for footprint. |
+| Observability | `grafana` | `grafana/grafana-oss` | `:3000` | Dashboards provisioned from `knative-extensions/monitoring` + custom panels. |
+
+### 5.3 Request Path — "User hits the frontend" (cold start)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as End user
+    participant K as Kourier
+    participant A as Activator
+    participant AS as Autoscaler
+    participant D as Deployment / ReplicaSet
+    participant Q as queue-proxy
+    participant App as frontend container
+    participant OT as OTel Collector
+    participant P as Prometheus
+
+    U->>K: GET /
+    K->>A: forward (revision has 0 pods)
+    A->>AS: report concurrency=1, target unmet
+    AS->>D: scale 0 → 1
+    D-->>Q: pod Ready
+    A->>Q: replay buffered request
+    Q->>App: HTTP request
+    App-->>Q: 200 OK + OTLP span
+    Q-->>K: 200 OK
+    K-->>U: 200 OK
+    Q->>P: /metrics (request count, latency)
+    App->>OT: OTLP traces / metrics
+    OT->>P: remote_write metrics
+```
+
+This is the moment scenario #1 (cold-start deployment) and scenario #4 (scale-to-zero proof) verify in Grafana — the gap between steps 2 and 7 is the cold-start latency visible on the *Activator TTFB* panel.
+
+### 5.4 Closed-loop Path — "LLM reacts to a latency alert"
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant P as Prometheus
+    participant AM as Alertmanager
+    participant WH as Webhook (/alerts)
+    participant AG as LangChain agent
+    participant LLM as LLM
+    participant MCP as MCP Server
+    participant API as Kubernetes API
+    participant K as Knative resources
+
+    P->>AM: rule HighRequestLatency fires
+    AM->>WH: POST alert JSON
+    WH->>AG: enqueue as new turn (synthetic operator msg)
+    AG->>LLM: prompt with alert + cluster state
+    LLM-->>AG: tool call: patch_service(maxScale=20, target=50)
+    AG->>MCP: invoke tool
+    MCP->>API: PATCH services.serving.knative.dev/frontend
+    API->>K: apply spec
+    K-->>API: revision updated
+    API-->>MCP: 200
+    MCP-->>AG: result
+    AG->>AM: silence the alert for 10 min
+    AG->>LLM: summarize action for transcript
+```
+
+Steps 5–7 are gated by mode: in `confirm` mode the operator presses Enter between 5 and 6; in `auto` mode (scenario #7) the agent proceeds without confirmation.
+
+### 5.5 Trust Boundaries and RBAC
+
+| Boundary | What crosses it | Control |
+|----------|-----------------|---------|
+| Operator UI → Agent | MCP protocol over stdio/SSE | Local socket or mTLS in cloud variant |
+| Agent → Kubernetes API | Bearer token of `ServiceAccount mcp/langchain-agent` | `ClusterRole` with read on cluster-wide resources; write restricted via `RoleBinding` to namespaces `astronomy-shop`, `knative-serving` (for revision-level patches only) |
+| Alertmanager → Webhook | HTTP POST inside the cluster network | NetworkPolicy: only `monitoring/alertmanager` may reach `mcp/langchain-agent:8080`; webhook validates a shared secret header |
+| User-facing app → World | HTTP via Kourier | Standard ingress TLS in cloud; no auth on the demo workload |
+| Agent → LLM provider | HTTPS egress | Egress NetworkPolicy allow-list: `api.anthropic.com`, `api.openai.com`; API keys mounted from `Secret`, never echoed in MCP tool arguments |
+
+The smallest privilege the agent needs is **read everywhere + write within the demo namespace and on Knative `Service`/`Revision`/`Route` objects in `astronomy-shop`**. Cluster-admin is never granted — even in `auto` mode the agent cannot, e.g., delete a namespace or modify webhooks.
+
 ---
 
 ## 6. Environment Configuration
@@ -348,6 +502,88 @@ Running `./scripts/bootstrap.sh` from a clean machine yields the demo environmen
 ---
 
 ## 7. Installation Method
+
+The environment described in §6 is brought up by **one idempotent script** (`scripts/bootstrap.sh`) that wraps Helm and `kubectl apply -k` calls. The same script works locally on `kind` and against any managed Kubernetes — the only difference is which `kind-config.yaml` / cloud cluster is created in step 0.
+
+### 7.1 Why a script and not just Helm or just Operators
+
+Three reasons:
+
+1. **Install order matters.** Knative Operator must be running before its `KnativeServing` CR is applied; the OpenTelemetry Operator before its `OpenTelemetryCollector` CR; cert-manager before any `Certificate` is requested. A flat `helm install` of N charts doesn't express that ordering.
+2. **CRD races.** `kubectl apply -f` on a fresh cluster occasionally fails because the CRD it references was created microseconds earlier. The script does explicit `kubectl wait --for=condition=Established crd/...` between phases.
+3. **Secrets stay out of git.** The script reads `.env`, renders `Secret`s in-place and never writes the values back to disk; Helm `values.yaml` files committed in `deploy/` only reference secret names.
+
+We deliberately do **not** introduce GitOps (Argo CD / Flux) for the demo: it adds a control plane to debug for no benefit on a single-cluster, single-operator setup. The script is the install boundary.
+
+### 7.2 Prerequisites
+
+Before running the bootstrap, the operator's host needs:
+
+| Tool | Min. version | Purpose |
+|------|--------------|---------|
+| Docker (or compatible runtime) | 24 | Container runtime for kind / image builds |
+| `kind` | 0.25 | Local Kubernetes (local variant only) |
+| `kubectl` | 1.33 | Cluster operations |
+| `helm` | 3.14 | Chart installs |
+| `kn` (Knative CLI) | 1.19 | Convenience for revision/traffic ops; not required by the script |
+| `python` | 3.11 | LangChain agent runtime (only if running the agent outside the cluster) |
+| `gcloud` / `aws` / `az` | latest | Cloud variant only |
+
+A populated `.env` (copied from `.env.example`) is required. Missing entries make the script fail fast in **phase 0** before any cluster mutation.
+
+### 7.3 Install Phases
+
+The script is broken into nine phases. Each phase is idempotent — re-running the script after a failure picks up where it left off, and re-running it on a fully installed cluster is a no-op.
+
+```mermaid
+graph LR
+    P0[0. Preflight<br/>tools + .env check] --> P1[1. Cluster<br/>kind create / cloud verify]
+    P1 --> P2[2. cert-manager<br/>Helm chart + wait CRDs]
+    P2 --> P3[3. Knative Operator<br/>+ KnativeServing/Eventing CRs]
+    P3 --> P4[4. Kourier<br/>via KnativeServing CR]
+    P4 --> P5[5. Observability<br/>kube-prometheus-stack + OTel Operator + Collector + Tempo/Zipkin]
+    P5 --> P6[6. MCP / Agent<br/>RBAC + Deployment + Service]
+    P6 --> P7[7. Astronomy Shop<br/>kustomize overlay with Knative Services]
+    P7 --> P8[8. Smoke test<br/>curl frontend, verify metrics in Prometheus]
+    P8 --> P9[9. Print summary<br/>URLs, Grafana password, agent endpoint]
+```
+
+| Phase | Command (essence) | Wait condition |
+|-------|-------------------|----------------|
+| 0 | `bash scripts/preflight.sh` | tools present, `.env` complete |
+| 1 | `kind create cluster --config deploy/kind-config.yaml` (local) or `gcloud container clusters get-credentials …` | nodes `Ready` |
+| 2 | `helm install cert-manager jetstack/cert-manager -n cert-manager --create-namespace --set crds.enabled=true` | `kubectl rollout status -n cert-manager …` |
+| 3 | `kubectl apply -f deploy/knative/operator.yaml` then `kubectl apply -f deploy/knative/serving.yaml deploy/knative/eventing.yaml` | `KnativeServing/Ready=True`, `KnativeEventing/Ready=True` |
+| 4 | (declared in `KnativeServing.spec.ingress.kourier`) | `kourier` Deployment ready, NodePort/LB reachable |
+| 5 | `helm install prom prometheus-community/kube-prometheus-stack -n monitoring -f deploy/observability/prometheus-values.yaml` <br> `helm install otel open-telemetry/opentelemetry-operator -n opentelemetry` <br> `kubectl apply -f deploy/observability/otel-collector.yaml` <br> `kubectl apply -f deploy/observability/tempo.yaml` (cloud) or `zipkin.yaml` (local) | Grafana, Prometheus, OTel Collector pods `Ready` |
+| 6 | `kubectl apply -k deploy/mcp/` (RBAC + Deployment + Service + NetworkPolicy) | Agent `Ready`, `/healthz` returns 200 |
+| 7 | `kubectl apply -k deploy/astronomy-shop/` (Knative `Service`s + stateful Deployments) | every `Service.serving.knative.dev` reports `Ready=True` |
+| 8 | `curl http://frontend.astronomy-shop.127.0.0.1.nip.io/` ; `promtool query instant 'up{namespace="astronomy-shop"}'` | HTTP 200 and ≥ N targets up |
+| 9 | echo URLs and credentials | — |
+
+Total cold install on a developer laptop: **~10–15 minutes** dominated by image pulls in phase 7.
+
+### 7.4 Verification
+
+After phase 9 the operator should see:
+
+- `kn service list -n astronomy-shop` — all services `READY=True` with a public URL.
+- Grafana → folder *Knative* → dashboard *Knative Serving — Revision* — non-empty request-rate panel for `frontend`.
+- Webhook reachability: `curl -XPOST http://localhost:8080/alerts -H 'X-Demo-Token: …' -d '{"alerts":[{"labels":{"alertname":"Test"}}]}'` returns `202 Accepted` and the agent logs an entry.
+- A natural-language prompt — "list all revisions of `recommendation` and tell me which one is receiving traffic" — produces a sensible answer via the MCP tool path.
+
+If any of the four fails, the script prints a focused diagnostic (which CRD didn't establish, which pod is `ImagePullBackOff`, which `KnativeServing` condition is `False`).
+
+### 7.5 Teardown
+
+`scripts/teardown.sh` is the inverse:
+
+- **Local:** `kind delete cluster --name knative-o` — leaves the host in its original state.
+- **Cloud:** `kubectl delete -k deploy/astronomy-shop/` then `helm uninstall` of every chart in reverse phase order, then `KnativeServing` / `KnativeEventing` CRs, then the operators, then `cert-manager`. The script leaves the managed cluster itself in place (deleting a GKE/EKS/AKS cluster is the operator's call).
+
+### 7.6 Upgrades
+
+Upgrades are performed by editing the version in `deploy/knative/serving.yaml` (or the Helm chart's `--version` in the script) and re-running `bootstrap.sh`. The Knative Operator handles the rolling upgrade of `serving`/`eventing` components; Helm handles the observability stack. Application image updates are handled by the LLM during the demo (scenario #2) — they are not part of `bootstrap.sh`.
 
 ---
 
