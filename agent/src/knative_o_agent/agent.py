@@ -52,11 +52,14 @@ class KnativeAgent:
         self._lock = asyncio.Lock()
 
     async def start(self) -> None:
+        args = list(self.settings.mcp_server_args)
+        if self.settings.mcp_cluster_provider:
+            args += ["--cluster-provider", self.settings.mcp_cluster_provider]
         self._mcp_client = MultiServerMCPClient(
             {
                 "kubernetes": {
                     "command": self.settings.mcp_server_command,
-                    "args": self.settings.mcp_server_args,
+                    "args": args,
                     "transport": "stdio",
                 }
             }

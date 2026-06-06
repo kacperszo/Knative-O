@@ -188,6 +188,16 @@ wrong and are now fixed (verified against the live upstream):
 - **Hard Helm version pins** for cert-manager / kube-prometheus-stack /
   otel-operator could 404 on a withdrawn patch. Those pins are now
   optional (empty in `.env` → Helm resolves the latest).
+- **MCP server couldn't find the cluster** (`no configuration has been
+  provided, try setting KUBERNETES_MASTER`). `kubernetes-mcp-server`
+  auto-detection didn't pick up in-cluster auth; the agent Deployment now
+  sets `MCP_CLUSTER_PROVIDER=in-cluster`, which the agent passes as
+  `--cluster-provider in-cluster`. Left unset for local `agent-dev` so it
+  uses your kubeconfig.
+- **Phase 6 needed a namespace created in phase 7.** The agent's write
+  `Role`/`RoleBinding` live in `astronomy-shop`, which only the app install
+  (phase 7) created — so phase 6 failed with "namespace not found". Phase 6
+  now creates `astronomy-shop` first (idempotently).
 
 ## 9. What's left to do
 

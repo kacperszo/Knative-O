@@ -40,7 +40,10 @@ spec:
             - name: DEMO_NAMESPACE
               value: astronomy-shop
             # The agent launches `kubernetes-mcp-server` over stdio (the binary
-            # is baked into the image). Override via MCP_SERVER_COMMAND if needed.
+            # is baked into the image). Force in-cluster auth — auto-detection
+            # can fail with "no configuration has been provided".
+            - name: MCP_CLUSTER_PROVIDER
+              value: in-cluster
             - name: ANTHROPIC_API_KEY
               valueFrom: { secretKeyRef: { name: agent-secrets, key: ANTHROPIC_API_KEY, optional: true } }
             - name: OPENAI_API_KEY

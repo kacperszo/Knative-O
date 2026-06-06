@@ -89,6 +89,10 @@ ok "Observability stack ready"
 # ----- Phase 6: MCP / agent -----
 info "Phase 6: MCP / agent"
 kubectl apply -f "${DEPLOY_DIR}/mcp/namespace.yaml"
+# The agent's write RBAC (Role/RoleBinding) lives in the astronomy-shop
+# namespace, which the app install (phase 7) creates. Create it here too so
+# phase 6 can bind into it; the create is idempotent.
+kubectl create namespace astronomy-shop --dry-run=client -o yaml | kubectl apply -f -
 # Render Secret from .env (kubectl apply --dry-run | apply) so we never commit secrets.
 kubectl create secret generic agent-secrets \
   --namespace mcp \

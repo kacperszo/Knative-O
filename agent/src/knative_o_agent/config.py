@@ -12,6 +12,11 @@ class Settings(BaseSettings):
 
     mcp_server_command: str = "kubernetes-mcp-server"
     mcp_server_args: list[str] = []
+    # When set, forces kubernetes-mcp-server's connection strategy. In a pod
+    # set this to "in-cluster" — auto-detection can fail with
+    # "no configuration has been provided / KUBERNETES_MASTER". Leave unset
+    # locally so it falls back to your ~/.kube/config.
+    mcp_cluster_provider: str | None = None
 
     demo_namespace: str = "astronomy-shop"
     agent_mode: Literal["confirm", "auto"] = "confirm"
