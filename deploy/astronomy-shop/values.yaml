@@ -1,0 +1,31 @@
+# Helm values for the open-telemetry/opentelemetry-demo chart.
+#
+# We disable the bundled UIs/storage we don't want a second copy of and keep
+# the app's own OpenTelemetry Collector + Jaeger so the collector config the
+# chart renders stays valid out of the box. Our kube-prometheus-stack (in the
+# `monitoring` namespace) covers the Knative control plane; wiring the demo's
+# Prometheus as an extra Grafana datasource is a follow-up (see IMPLEMENTATION.md).
+
+# Duplicate Grafana — we use ours in the monitoring namespace.
+grafana:
+  enabled: false
+
+# Log store; heavy, not needed for the metrics/traces demo.
+opensearch:
+  enabled: false
+
+# Kept on (the chart's collector config references them):
+#   prometheus: app metrics scrape target
+#   jaeger:     trace backend for the app's collector
+#   opentelemetry-collector: the app's telemetry sink
+prometheus:
+  enabled: true
+jaeger:
+  enabled: true
+opentelemetry-collector:
+  enabled: true
+
+# Keep image tags at the chart default (= chart appVersion, e.g. 2.2.0).
+default:
+  image:
+    pullPolicy: IfNotPresent

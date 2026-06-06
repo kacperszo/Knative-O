@@ -1,37 +1,53 @@
 # Astronomy Shop overlay
 
-This overlay deploys the [OpenTelemetry Astronomy Shop](https://github.com/open-telemetry/opentelemetry-demo)
-into the `astronomy-shop` namespace, with **selected services converted
-from `Deployment` to Knative `Service`** so we can demonstrate scale-to-zero
-and traffic splitting (see §3.2 of the project README).
+Deploys the [OpenTelemetry Astronomy Shop](https://github.com/open-telemetry/opentelemetry-demo)
+into the `astronomy-shop` namespace using the **official Helm chart**
+(`open-telemetry/opentelemetry-demo`, pinned by `OTEL_DEMO_CHART_VERSION`
+in `.env`).
 
-`base.yaml` is **not committed** — it is fetched by `scripts/bootstrap.sh`
-from the upstream release matching `ASTRONOMY_SHOP_VERSION` in `.env`. This
-keeps the upstream license/notices intact and lets us bump the demo by
-changing one env var.
+We use the chart rather than the rendered `kubernetes/opentelemetry-demo.yaml`
+because the rendered manifest hardcodes the `otel-demo` namespace and bundles a
+full second observability stack. `values.yaml` here disables the duplicate
+Grafana and OpenSearch and keeps the app's own Collector + Jaeger + Prometheus
+so the chart's collector config stays valid.
+
+The app installs as ordinary `Deployment`s. **Converting a service to a Knative
+Service is the LLM agent's job** (demo scenario #1); `knative/frontend.yaml` is
+the reference manifest the agent should produce and a manual fallback.
 
 ## Layout
 
 ```
 deploy/astronomy-shop/
-  kustomization.yaml       # bundles base + patches
-  namespace.yaml
-  base.yaml                # fetched at bootstrap time (gitignored)
-  patches/
-    frontend-knative.yaml  # convert frontend Deployment → knative Service
-    # TODO: productcatalog, recommendation, currency, payment
+  values.yaml            # Helm values (disable duplicate backends)
+  knative/
+    frontend.yaml        # reference Knative Service (NOT auto-applied)
+  README.md
 ```
 
-## Services we Knative-ize
+## Real upstream names (verified against chart appVersion 2.2.0)
 
-| Service | Why |
-|---------|-----|
-| `frontend` | User-facing, ideal for cold-start and canary demos. |
-| `productcatalog` | Read-heavy, good autoscaling target. |
-| `recommendation` | Used for traffic-split (90/10) in scenario #2. |
-| `currency` | Stateless price conversion; cheap to scale to zero. |
-| `payment` | Used to demonstrate diagnostics on synthetic failures. |
+Inter-service addresses use port **8080** and these Deployment/Service names:
 
-Stateful components (`kafka`, `valkey`, `postgres`, `flagd`) stay as
-regular Deployments — Knative Serving is not suitable for stateful
-workloads.
+| Role | Name |
+|------|------|
+| Web UI | `frontend` (behind `frontend-proxy`, the Envoy entrypoint) |
+| Catalog | `product-catalog` |
+| Recommendations | `recommendation` |
+| Currency | `currency` |
+| Payment | `payment` |
+| Cart store | `valkey-cart` |
+| Orders DB | `postgresql` |
+| Feature flags | `flagd` |
+| Telemetry sink | `otel-collector` |
+
+Stateful components (`valkey-cart`, `postgresql`, `kafka`, `flagd`) stay as
+Deployments — Knative Serving is not for stateful workloads.
+
+## Caveat when Knative-izing internal services
+
+Knative cluster-local Services answer on **port 80**, but Astronomy Shop
+services call each other on **:8080**. Convert a **leaf** service that nothing
+else calls first (`currency` is the easiest), or access a converted service
+through Kourier rather than the in-cluster mesh. See the header of
+`knative/frontend.yaml`.

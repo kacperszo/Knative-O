@@ -10,7 +10,8 @@ COPY src ./src
 RUN pip install --user .
 
 # kubernetes-mcp-server binary — downloaded once at build time.
-ARG MCP_VERSION=0.0.46
+# Asset name verified: kubernetes-mcp-server-linux-<arch> on each release.
+ARG MCP_VERSION=0.0.62
 ARG TARGETARCH=amd64
 ADD https://github.com/containers/kubernetes-mcp-server/releases/download/v${MCP_VERSION}/kubernetes-mcp-server-linux-${TARGETARCH} /usr/local/bin/kubernetes-mcp-server
 RUN chmod +x /usr/local/bin/kubernetes-mcp-server

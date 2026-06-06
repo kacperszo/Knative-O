@@ -39,8 +39,8 @@ spec:
               value: confirm
             - name: DEMO_NAMESPACE
               value: astronomy-shop
-            - name: MCP_SERVER_URL
-              value: "stdio://kubernetes-mcp-server"
+            # The agent launches `kubernetes-mcp-server` over stdio (the binary
+            # is baked into the image). Override via MCP_SERVER_COMMAND if needed.
             - name: ANTHROPIC_API_KEY
               valueFrom: { secretKeyRef: { name: agent-secrets, key: ANTHROPIC_API_KEY, optional: true } }
             - name: OPENAI_API_KEY

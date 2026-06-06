@@ -25,9 +25,6 @@ charts/
 *.tgz
 kubeconfig-*
 
-# Fetched at bootstrap time (upstream Astronomy Shop manifest)
-deploy/astronomy-shop/base.yaml
-
 # OS
 .DS_Store
 Thumbs.db

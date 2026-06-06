@@ -58,3 +58,11 @@ wait_condition() {
   local kind="$1" name="$2" ns="$3" cond="$4" timeout="${5:-300s}"
   kubectl wait -n "${ns}" "${kind}/${name}" --for=condition="${cond}" --timeout="${timeout}"
 }
+
+# Echo "--version X" when the given value is non-empty, otherwise nothing
+# (so Helm resolves the latest chart version). Lets us avoid shipping hard
+# pins that may 404 if a patch release is pulled.
+version_flag() {
+  local v="${1:-}"
+  [[ -n "${v}" ]] && printf -- "--version %s" "${v}"
+}

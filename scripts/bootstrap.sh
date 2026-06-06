@@ -25,9 +25,10 @@ ok "Cluster reachable"
 info "Phase 2: cert-manager"
 helm repo add jetstack https://charts.jetstack.io --force-update >/dev/null
 helm repo update >/dev/null
+# shellcheck disable=SC2046  # word-splitting of version_flag is intended
 helm upgrade --install cert-manager jetstack/cert-manager \
   --namespace cert-manager --create-namespace \
-  --version "${CERT_MANAGER_VERSION}" \
+  $(version_flag "${CERT_MANAGER_VERSION:-}") \
   --set crds.enabled=true \
   --wait --timeout 5m
 ok "cert-manager ready"
@@ -60,16 +61,18 @@ helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm
 helm repo update >/dev/null
 
 # Render grafana password into the values file via --set (don't write to disk).
+# shellcheck disable=SC2046
 helm upgrade --install prom prometheus-community/kube-prometheus-stack \
   --namespace monitoring --create-namespace \
-  --version "${KUBE_PROMETHEUS_STACK_VERSION}" \
+  $(version_flag "${KUBE_PROMETHEUS_STACK_VERSION:-}") \
   -f "${DEPLOY_DIR}/observability/prometheus-values.yaml" \
   --set "grafana.adminPassword=${GRAFANA_ADMIN_PASSWORD:-$(openssl rand -hex 12)}" \
   --wait --timeout 10m
 
+# shellcheck disable=SC2046
 helm upgrade --install otel-operator open-telemetry/opentelemetry-operator \
   --namespace opentelemetry --create-namespace \
-  --version "${OTEL_OPERATOR_VERSION}" \
+  $(version_flag "${OTEL_OPERATOR_VERSION:-}") \
   --set "manager.collectorImage.repository=otel/opentelemetry-collector-contrib" \
   --wait --timeout 5m
 wait_crd_established opentelemetrycollectors.opentelemetry.io
@@ -102,19 +105,24 @@ kubectl apply -f "${DEPLOY_DIR}/mcp/networkpolicy.yaml"
 wait_rollout deployment langchain-agent mcp 5m
 ok "Agent up"
 
-# ----- Phase 7: Astronomy Shop -----
-info "Phase 7: Astronomy Shop"
-SHOP_BASE="${DEPLOY_DIR}/astronomy-shop/base.yaml"
-if [[ ! -f "${SHOP_BASE}" ]]; then
-  log "Fetching Astronomy Shop ${ASTRONOMY_SHOP_VERSION}…"
-  curl -fsSL \
-    "https://raw.githubusercontent.com/open-telemetry/opentelemetry-demo/v${ASTRONOMY_SHOP_VERSION}/kubernetes/opentelemetry-demo.yaml" \
-    -o "${SHOP_BASE}"
-fi
-kubectl apply -k "${DEPLOY_DIR}/astronomy-shop/"
+# ----- Phase 7: Astronomy Shop (via the official Helm chart) -----
+# We install the upstream chart rather than a rendered manifest: the rendered
+# kubernetes/*.yaml hardcodes the otel-demo namespace and bundles a second
+# observability stack. The chart lets us pick the namespace and disable the
+# backends we already run ourselves. The app is deployed as plain Deployments;
+# converting a service to Knative is the LLM's job (demo scenario #1), with a
+# reference manifest in deploy/astronomy-shop/knative/.
+info "Phase 7: Astronomy Shop (Helm)"
+kubectl create namespace astronomy-shop --dry-run=client -o yaml | kubectl apply -f -
+# shellcheck disable=SC2046
+helm upgrade --install astronomy-shop open-telemetry/opentelemetry-demo \
+  --namespace astronomy-shop \
+  $(version_flag "${OTEL_DEMO_CHART_VERSION:-}") \
+  -f "${DEPLOY_DIR}/astronomy-shop/values.yaml" \
+  --wait --timeout 12m
 
-info "Waiting for the frontend Knative Service…"
-wait_condition Service.serving.knative.dev frontend astronomy-shop Ready 10m
+info "Waiting for the frontend Deployment…"
+wait_rollout deployment frontend astronomy-shop 10m
 ok "Astronomy Shop deployed"
 
 # ----- Phase 8: smoke -----
@@ -123,17 +131,21 @@ bash "${SCRIPT_DIR}/smoke.sh"
 
 # ----- Phase 9: summary -----
 info "Phase 9: summary"
-FRONTEND_URL="$(kubectl get ksvc -n astronomy-shop frontend -o jsonpath='{.status.url}')"
-GRAFANA_PORT_FWD="kubectl -n monitoring port-forward svc/prom-grafana 3000:80"
-AGENT_PORT_FWD="kubectl -n mcp port-forward svc/langchain-agent 8080:8080"
 
 cat <<EOF
 
 ${C_GREEN}Knative-O is up.${C_OFF}
-  Frontend:  ${FRONTEND_URL}
-  Grafana:   run \`${GRAFANA_PORT_FWD}\` then http://localhost:3000 (admin / \${GRAFANA_ADMIN_PASSWORD})
-  Agent:     run \`${AGENT_PORT_FWD}\` then POST to http://localhost:8080/alerts with Bearer \${WEBHOOK_TOKEN}
+  Frontend:  run \`kubectl -n astronomy-shop port-forward svc/frontend-proxy 8081:8080\`
+             then open http://localhost:8081
+  Grafana:   run \`kubectl -n monitoring port-forward svc/prom-grafana 3000:80\`
+             then http://localhost:3000 (admin / your GRAFANA_ADMIN_PASSWORD)
+  Agent:     run \`kubectl -n mcp port-forward svc/langchain-agent 8080:8080\`
+             then POST to http://localhost:8080/alerts with Bearer \${WEBHOOK_TOKEN}
 
-Try:   curl -fsS \${FRONTEND_URL}
-       kubectl logs -n mcp deploy/langchain-agent -f
+The app runs as plain Deployments. Ask the agent to put a service on Knative
+(demo scenario #1), e.g.:
+  kubectl exec -n mcp deploy/langchain-agent -- \\
+    knative-o-agent prompt "Convert the currency service in astronomy-shop to a Knative Service with scale-to-zero."
+
+Logs:  kubectl logs -n mcp deploy/langchain-agent -f
 EOF

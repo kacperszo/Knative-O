@@ -76,8 +76,20 @@ class KnativeAgent:
         )
 
     async def stop(self) -> None:
-        if self._mcp_client is not None:
-            await self._mcp_client.close()
+        # MultiServerMCPClient (langchain-mcp-adapters >=0.2) manages stdio
+        # subprocess lifecycle per session and exposes no close()/aclose().
+        # Call one only if a future version adds it; otherwise this is a no-op.
+        client = self._mcp_client
+        if client is None:
+            return
+        for name in ("aclose", "close"):
+            fn = getattr(client, name, None)
+            if callable(fn):
+                result = fn()
+                if asyncio.iscoroutine(result):
+                    await result
+                break
+        self._mcp_client = None
 
     async def run(self, user_message: str) -> str:
         if self._agent is None:

@@ -20,7 +20,7 @@ fi
 # Cloud: tear down our resources but leave the managed cluster intact.
 info "Cloud teardown — removing demo resources, keeping the cluster"
 
-kubectl delete -k "${DEPLOY_DIR}/astronomy-shop/" --ignore-not-found || true
+helm uninstall -n astronomy-shop astronomy-shop || true
 kubectl delete -f "${DEPLOY_DIR}/mcp/" --ignore-not-found || true
 kubectl delete -f "${DEPLOY_DIR}/observability/alert-rules.yaml" --ignore-not-found || true
 kubectl delete -f "${DEPLOY_DIR}/observability/servicemonitors.yaml" --ignore-not-found || true

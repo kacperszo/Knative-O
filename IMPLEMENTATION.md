@@ -68,10 +68,16 @@ At the end you'll see something like:
 
 ```
 Knative-O is up.
-  Frontend:  http://frontend.astronomy-shop.127.0.0.1.nip.io
-  Grafana:   run `kubectl -n monitoring port-forward svc/prom-grafana 3000:80` then http://localhost:3000
-  Agent:     run `kubectl -n mcp port-forward svc/langchain-agent 8080:8080`
+  Frontend:  kubectl -n astronomy-shop port-forward svc/frontend-proxy 8081:8080  → http://localhost:8081
+  Grafana:   kubectl -n monitoring   port-forward svc/prom-grafana    3000:80    → http://localhost:3000
+  Agent:     kubectl -n mcp          port-forward svc/langchain-agent  8080:8080
 ```
+
+The Astronomy Shop is installed via its official Helm chart as ordinary
+`Deployment`s (entry point: the `frontend-proxy` Envoy Service). It is **not**
+on Knative yet — putting a service on Knative is what the LLM agent
+demonstrates (scenario #1); see `deploy/astronomy-shop/knative/frontend.yaml`
+for the reference manifest and the port-80 caveat.
 
 ## 4. Verify it actually works
 
@@ -101,12 +107,15 @@ kubectl exec -n mcp deploy/langchain-agent -- \
 ```
 
 Or, if you'd rather run the agent locally against your kubeconfig (no
-docker, no in-cluster pod):
+docker, no in-cluster pod). Note: `make agent-dev` installs the Python
+package but **not** the `kubernetes-mcp-server` binary — put it on your
+`PATH` first (download from the
+[releases page](https://github.com/containers/kubernetes-mcp-server/releases)):
 
 ```bash
 make agent-dev
 # in another shell
-knative-o-agent prompt "list knative revisions of frontend"
+knative-o-agent prompt "list services in astronomy-shop and their replica counts"
 ```
 
 ### Closed-loop / webhook path
@@ -151,40 +160,62 @@ phase order; the managed cluster itself is *not* deleted.
 | Re-render Secret from `.env` only | `bash scripts/bootstrap.sh # idempotent, only phase 6 mutates` |
 | Watch agent logs | `kubectl logs -n mcp deploy/langchain-agent -f` |
 | Watch autoscaler decisions | `kubectl logs -n knative-serving deploy/autoscaler -f` |
-| Force a cold start | `kubectl scale -n astronomy-shop deploy/frontend-00001-deployment --replicas=0` |
+| Force a cold start (after Knative conversion) | `kubectl scale -n astronomy-shop deploy/currency-00001-deployment --replicas=0` |
 | Drop the agent's conversation state | `kubectl rollout restart deploy/langchain-agent -n mcp` |
 
 ---
 
-## 8. What's left to do
+## 8. Known issues / corrected since the first scaffold
+
+The first scaffold shipped some values I'd written from memory; these were
+wrong and are now fixed (verified against the live upstream):
+
+- **Astronomy Shop install used a 404 URL.** It fetched
+  `…/opentelemetry-demo/v${VERSION}/kubernetes/opentelemetry-demo.yaml`
+  with a `v` prefix and version `1.13.0` — that tag does not exist (tags
+  have **no** `v` prefix, and `1.13.0` was never a release). Phase 7 now
+  installs the **official Helm chart** (`open-telemetry/opentelemetry-demo`,
+  `OTEL_DEMO_CHART_VERSION=0.40.9`, appVersion 2.2.0), which also lets us
+  pick the namespace and disable the duplicate Grafana/OpenSearch.
+- **Agent crashed on shutdown.** `MultiServerMCPClient` has no `close()`;
+  `agent.stop()` raised `AttributeError`. It now only calls a teardown
+  method if a future adapter version exposes one.
+- **`kubernetes-mcp-server` version.** Dockerfile pinned a stale
+  `0.0.46`; bumped to `0.0.62` (binary asset name verified).
+- **Wrong service / env names** in the frontend manifest (`productcatalog`
+  → `product-catalog`, `AD_SERVICE_ADDR` → `AD_ADDR`, etc.). The reference
+  Knative manifest now matches the real 2.2.0 contract.
+- **Hard Helm version pins** for cert-manager / kube-prometheus-stack /
+  otel-operator could 404 on a withdrawn patch. Those pins are now
+  optional (empty in `.env` → Helm resolves the latest).
+
+## 9. What's left to do
 
 Roughly in the order I'd tackle them. Each bullet is small enough to be
 one PR.
 
 ### Must-have before the live demo
 
-- **End-to-end install validation.** YAML/Python parse cleanly, shell is
-  syntactically valid, but `make bootstrap` against a real kind cluster
-  hasn't been run from a fresh clone yet. Likely first-run rough edges:
-  Knative Operator namespace (the upstream release defaults to
-  `default` — we apply it as-is; if that breaks, install into
-  `knative-operator` ns and watch from there), Kourier service name
-  drift across Knative versions, ServiceMonitor label-selectors that the
-  upstream Astronomy Shop pods may not carry.
-- **Astronomy Shop overlay coverage.** Only `frontend` is converted to
-  a Knative Service. Demo scenarios #2–#4 need `recommendation`,
-  `currency`, `productcatalog`, `payment` patched the same way. The
-  template is `deploy/astronomy-shop/patches/frontend-knative.yaml`.
-- **Agent container image actually published.** The Deployment
-  references `ghcr.io/kacperszo/knative-o-agent:latest` but nothing
-  builds and pushes it yet. Either:
-  - Add a GitHub Actions workflow (`.github/workflows/agent-image.yaml`)
-    that builds + pushes on main, or
-  - Document `make agent-image && kind load docker-image …` as the dev
-    flow for now and inline that in `bootstrap.sh`.
-- **Demo runbook.** `scripts/scenarios/01-cold-start.sh`,
-  `02-canary.sh`, …, one per scenario in §3.3, so the live demo follows
-  a clear narrative instead of ad-hoc kubectl.
+- **End-to-end install validation.** YAML/Python parse cleanly and shell
+  is syntactically valid, but `make bootstrap` has **not** been run end to
+  end against a real kind cluster from this environment (the sandbox has
+  no Docker/kind and a restricted network allowlist). This is the single
+  most important next step. Likely first-run rough edges: Knative Operator
+  namespace (the upstream release defaults to `default`), Kourier
+  Deployment name across Knative versions, whether disabling the demo
+  chart's Grafana/OpenSearch leaves its Collector config valid, and the
+  PodMonitor for queue-proxy matching nothing until a service is converted.
+- **Knative conversion coverage.** Only `frontend` has a reference
+  manifest (`deploy/astronomy-shop/knative/frontend.yaml`), and it carries
+  the port-80 caveat. Scenarios #2–#4 want `currency`, `recommendation`,
+  `product-catalog`, `payment` too. Start with `currency` (a leaf service,
+  no port-80 routing problem).
+- **Agent container image actually published.** The Deployment references
+  `ghcr.io/kacperszo/knative-o-agent:latest` but nothing builds/pushes it.
+  Either add `.github/workflows/agent-image.yaml`, or document
+  `make agent-image && kind load docker-image …` and inline it in phase 6.
+- **Demo runbook.** `scripts/scenarios/01-cold-start.sh`, `02-canary.sh`,
+  … one per scenario in §3.3.
 
 ### Should-have
 
@@ -197,12 +228,17 @@ one PR.
   the proposed action. A tiny operator CLI client (`knative-o-agent
   chat`) that streams the conversation and lets you press Enter to
   approve would make the live demo much more compelling.
+- **Single observability stack.** Right now we keep the demo chart's
+  bundled Prometheus + Jaeger (so its Collector config stays valid) *and*
+  run our own kube-prometheus-stack for the Knative control plane — two
+  Prometheis. Consolidate by pointing the demo Collector at our backends
+  and disabling the chart's Prometheus, or by adding the demo Prometheus
+  as an extra Grafana datasource.
 - **Tests.** A unit test for `webhook._format_turn` (no LLM dependency)
   and a `pytest` smoke that exercises the agent against a fake MCP
   server would catch regressions fast.
 - **CI.** GitHub Actions: `bash -n` on shell, `yamllint` on `deploy/`,
-  `ruff` + `mypy` on `agent/`, kustomize build dry-run, helm template
-  lint.
+  `ruff` + `mypy` on `agent/`, `helm template` lint.
 
 ### Nice-to-have
 
