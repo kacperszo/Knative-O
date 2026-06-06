@@ -58,6 +58,12 @@ cert-manager → Knative Operator → Kourier → observability →
 MCP/agent → Astronomy Shop → smoke → summary). Expect ~10–15 minutes on
 a cold cache, mostly image pulls in phase 7.
 
+For the **local** target, phase 6 builds the agent image (`AGENT_IMAGE`,
+default `knative-o-agent:local`) and loads it straight into the kind cluster
+with `kind load docker-image` — no registry, no push. For the **cloud**
+target you must push an image yourself and set `AGENT_IMAGE` to its registry
+ref; bootstrap then skips the build/load and just pins the Deployment to it.
+
 Useful while it's running, in another shell:
 
 ```bash
@@ -220,10 +226,6 @@ one PR.
   the port-80 caveat. Scenarios #2–#4 want `currency`, `recommendation`,
   `product-catalog`, `payment` too. Start with `currency` (a leaf service,
   no port-80 routing problem).
-- **Agent container image actually published.** The Deployment references
-  `ghcr.io/kacperszo/knative-o-agent:latest` but nothing builds/pushes it.
-  Either add `.github/workflows/agent-image.yaml`, or document
-  `make agent-image && kind load docker-image …` and inline it in phase 6.
 - **Demo runbook.** `scripts/scenarios/01-cold-start.sh`, `02-canary.sh`,
   … one per scenario in §3.3.
 

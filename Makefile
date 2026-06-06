@@ -18,5 +18,10 @@ smoke: ## Run the post-install checks
 agent-dev: ## Run the agent locally against current kubeconfig (no docker)
 	cd agent && pip install -e . && knative-o-agent serve
 
-agent-image: ## Build the agent container image
-	docker build -t ghcr.io/kacperszo/knative-o-agent:latest agent
+AGENT_IMAGE ?= knative-o-agent:local
+
+agent-image: ## Build the agent container image (override AGENT_IMAGE=...)
+	docker build -t $(AGENT_IMAGE) agent
+
+agent-load: agent-image ## Build and load the agent image into the kind cluster
+	kind load docker-image $(AGENT_IMAGE) --name $${CLUSTER_NAME:-knative-o}

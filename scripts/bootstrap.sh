@@ -88,6 +88,26 @@ ok "Observability stack ready"
 
 # ----- Phase 6: MCP / agent -----
 info "Phase 6: MCP / agent"
+
+AGENT_IMAGE="${AGENT_IMAGE:-knative-o-agent:local}"
+if [[ "${DEPLOY_TARGET}" == "local" ]]; then
+  # Build the agent image locally and load it straight into kind — no registry,
+  # no push, works offline after the first image pull.
+  case "$(uname -m)" in
+    x86_64|amd64)   BUILD_ARCH=amd64 ;;
+    aarch64|arm64)  BUILD_ARCH=arm64 ;;
+    *) BUILD_ARCH=amd64; warn "Unknown arch $(uname -m); building amd64" ;;
+  esac
+  log "Building ${AGENT_IMAGE} (${BUILD_ARCH})…"
+  docker build --build-arg "TARGETARCH=${BUILD_ARCH}" -t "${AGENT_IMAGE}" "${REPO_ROOT}/agent"
+  log "Loading image into kind cluster ${CLUSTER_NAME}…"
+  kind load docker-image "${AGENT_IMAGE}" --name "${CLUSTER_NAME}"
+else
+  if [[ "${AGENT_IMAGE}" == "knative-o-agent:local" ]]; then
+    fail "Cloud target needs AGENT_IMAGE set to a registry image your cluster can pull"
+  fi
+fi
+
 kubectl apply -f "${DEPLOY_DIR}/mcp/namespace.yaml"
 # The agent's write RBAC (Role/RoleBinding) lives in the astronomy-shop
 # namespace, which the app install (phase 7) creates. Create it here too so
@@ -106,6 +126,8 @@ kubectl apply -f "${DEPLOY_DIR}/mcp/rbac.yaml"
 kubectl apply -f "${DEPLOY_DIR}/mcp/deployment.yaml"
 kubectl apply -f "${DEPLOY_DIR}/mcp/service.yaml"
 kubectl apply -f "${DEPLOY_DIR}/mcp/networkpolicy.yaml"
+# Pin the image to the (possibly overridden) AGENT_IMAGE.
+kubectl set image -n mcp deployment/langchain-agent "agent=${AGENT_IMAGE}"
 wait_rollout deployment langchain-agent mcp 5m
 ok "Agent up"
 
