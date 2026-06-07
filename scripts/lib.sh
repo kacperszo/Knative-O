@@ -14,11 +14,14 @@ else
   C_RED=""; C_GREEN=""; C_YELLOW=""; C_BLUE=""; C_DIM=""; C_OFF=""
 fi
 
-log()   { printf "%s[%(%H:%M:%S)T]%s %s\n" "${C_DIM}" -1 "${C_OFF}" "$*"; }
-info()  { printf "%s[%(%H:%M:%S)T] %s%s\n" "${C_BLUE}" -1 "$*" "${C_OFF}"; }
-ok()    { printf "%s[%(%H:%M:%S)T] %s%s\n" "${C_GREEN}" -1 "$*" "${C_OFF}"; }
-warn()  { printf "%s[%(%H:%M:%S)T] %s%s\n" "${C_YELLOW}" -1 "$*" "${C_OFF}" >&2; }
-fail()  { printf "%s[%(%H:%M:%S)T] %s%s\n" "${C_RED}" -1 "$*" "${C_OFF}" >&2; exit 1; }
+# NB: avoid printf's %(...)T format — it needs bash >= 4.2 and macOS still
+# ships bash 3.2. `date` once per log line is fine for a bootstrap script.
+_ts() { date +%H:%M:%S; }
+log()   { printf "%s[%s]%s %s\n" "${C_DIM}"    "$(_ts)" "${C_OFF}" "$*"; }
+info()  { printf "%s[%s] %s%s\n" "${C_BLUE}"   "$(_ts)" "$*" "${C_OFF}"; }
+ok()    { printf "%s[%s] %s%s\n" "${C_GREEN}"  "$(_ts)" "$*" "${C_OFF}"; }
+warn()  { printf "%s[%s] %s%s\n" "${C_YELLOW}" "$(_ts)" "$*" "${C_OFF}" >&2; }
+fail()  { printf "%s[%s] %s%s\n" "${C_RED}"    "$(_ts)" "$*" "${C_OFF}" >&2; exit 1; }
 
 # Load .env if present, exporting variables.
 load_env() {
