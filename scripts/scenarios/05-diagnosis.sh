@@ -11,7 +11,7 @@ source "${SCRIPT_DIR}/../lib.sh"
 
 NS_APP=astronomy-shop
 NS_AGENT=mcp
-TARGET=currency
+TARGET=${KNATIVE_TARGET:-currency-knative}
 
 info "Scenario 5: diagnosis"
 
