@@ -22,17 +22,41 @@ info "Smoke: Prometheus is scraping the Knative control plane"
 # plain Deployments until the agent converts a service, so our queue-proxy
 # PodMonitor matches nothing yet. Knative control-plane targets prove our
 # monitoring pipeline works.
-PROM_POD="$(kubectl get pod -n monitoring -l app.kubernetes.io/name=prometheus -o jsonpath='{.items[0].metadata.name}')"
-ACTIVE="$(kubectl exec -n monitoring "${PROM_POD}" -c prometheus -- \
-  wget -qO- 'http://localhost:9090/api/v1/query?query=up{namespace="knative-serving"}==1' \
-  | grep -o '"value"' | wc -l)"
-(( ACTIVE > 0 )) || fail "Prometheus reports no healthy targets in knative-serving"
+#
+# We query Prometheus through the apiserver proxy so we don't depend on wget
+# being present in the Prometheus container (recent kube-prometheus-stack
+# uses a distroless image with no wget/curl). The Service name varies with
+# chart version / fullnameOverride, so we probe a few likely label sets.
+PROM_SVC=""
+for sel in \
+    "app.kubernetes.io/name=prometheus" \
+    "app=kube-prometheus-stack-prometheus" \
+    "operator.prometheus.io/name" ; do
+  PROM_SVC=$(kubectl get svc -n monitoring -l "${sel}" \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+  [[ -n "${PROM_SVC}" ]] && break
+done
+[[ -n "${PROM_SVC}" ]] || fail "no Prometheus Service found in monitoring (tried multiple label sets)"
+log "  via svc ${PROM_SVC}"
+
+# Pre-encoded PromQL: up{namespace="knative-serving"}
+URL="/api/v1/namespaces/monitoring/services/${PROM_SVC}:9090/proxy/api/v1/query"
+URL+="?query=up%7Bnamespace%3D%22knative-serving%22%7D"
+RESP=$(kubectl get --raw "${URL}" 2>&1) || \
+  fail "Prometheus API proxy failed: ${RESP}"
+echo "${RESP}" | grep -q '"status":"success"' || \
+  fail "unexpected Prometheus response: ${RESP}"
+# Count series whose latest value == "1" (target up).
+ACTIVE=$(echo "${RESP}" | grep -oE '"value":\[[^]]*"1"\]' | wc -l)
+(( ACTIVE > 0 )) || \
+  fail "Prometheus has no healthy targets in knative-serving (raw response: ${RESP})"
 ok "  ${ACTIVE} knative-serving targets up"
 
 info "Smoke: agent /healthz responds"
 AGENT_POD="$(kubectl get pod -n mcp -l app.kubernetes.io/name=langchain-agent -o jsonpath='{.items[0].metadata.name}')"
-kubectl exec -n mcp "${AGENT_POD}" -- \
-  python -c "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://localhost:8080/healthz').status==200 else 1)"
+# Same trick: use apiserver pod proxy so we don't need any in-container client.
+kubectl get --raw "/api/v1/namespaces/mcp/pods/${AGENT_POD}:8080/proxy/healthz" >/dev/null \
+  || fail "agent /healthz did not respond"
 ok "  agent healthy"
 
 ok "Smoke passed"

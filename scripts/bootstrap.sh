@@ -158,9 +158,23 @@ info "Phase 7: Astronomy Shop (Helm)"
 # never recorded a release. The next install then fails with
 # "X cannot be imported into the current release: invalid ownership metadata"
 # because the leftover objects lack the meta.helm.sh/release-* annotations.
-# Detect that and wipe the namespace; phase 6's astronomy-shop RBAC gets
-# re-applied right after.
+# Orphans can be namespaced (in astronomy-shop) OR cluster-scoped (e.g. the
+# OTel Collector subchart's ClusterRole). We clean both.
 if ! helm status -n astronomy-shop astronomy-shop >/dev/null 2>&1; then
+  # Cluster-scoped orphans — survive a namespace delete, so handle first.
+  # 1) anything labelled for our release (covers most chart-rendered objects)
+  for kind in clusterrole clusterrolebinding; do
+    kubectl get "${kind}" -l "app.kubernetes.io/instance=astronomy-shop" \
+      -o name 2>/dev/null \
+      | xargs -r -L1 kubectl delete --ignore-not-found 2>/dev/null || true
+  done
+  # 2) belt-and-suspenders: known names the chart uses without our label
+  for name in otel-collector astronomy-shop-otel-collector; do
+    kubectl delete clusterrole "${name}" --ignore-not-found 2>/dev/null || true
+    kubectl delete clusterrolebinding "${name}" --ignore-not-found 2>/dev/null || true
+  done
+
+  # Namespaced orphans — wipe the whole namespace if chart SAs are present.
   if kubectl -n astronomy-shop get sa 2>/dev/null \
        | grep -qE "(jaeger|prometheus|grafana|opentelemetry-demo|otel-collector)"; then
     warn "Orphan Helm objects in astronomy-shop without a release — wiping namespace"

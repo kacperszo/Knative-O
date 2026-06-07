@@ -241,6 +241,22 @@ wrong and are now fixed (verified against the live upstream):
   (`helm status` fails but tell-tale ServiceAccounts exist) and wipes
   `astronomy-shop` before installing; the namespace-scoped agent RBAC is
   re-applied right after.
+- **Same orphan symptom on a `ClusterRole`** (`otel-collector` in
+  `namespace ""`). The OTel Collector subchart creates cluster-scoped
+  RBAC that survives a namespace wipe. Phase 7's recovery now also
+  deletes orphan `ClusterRole`/`ClusterRoleBinding` by label
+  (`app.kubernetes.io/instance=astronomy-shop`) and by known name
+  (`otel-collector`, `astronomy-shop-otel-collector`).
+- **Smoke phase 8 silently aborted** at the Prometheus check with no
+  message. Cause: `set -e + pipefail` + a `$(kubectl exec … | grep | wc -l)`
+  pipeline whose `kubectl exec` failed (recent kube-prometheus-stack
+  Prometheus images are distroless — no `wget`/`curl` inside the
+  container), which made the whole pipeline non-zero and killed the
+  script before the `|| fail` branch could fire. Rewrote both Prometheus
+  and agent health checks to use `kubectl get --raw` against the
+  apiserver Service/Pod proxy — no in-container client needed, the chart
+  Service is found by trying several label selectors, and the raw
+  response is included in the error message when it fails.
 - **`RuntimeError: ANTHROPIC_API_KEY is required for Claude models`** even
   with `OPENAI_API_KEY` set. Two stacked bugs: (1) bootstrap created the
   secret with `--from-literal=ANTHROPIC_API_KEY=""` when the env var was
