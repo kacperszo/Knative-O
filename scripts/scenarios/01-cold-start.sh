@@ -59,6 +59,14 @@ for e in envs:
 #     our Prometheus targets queue-proxy on 9090).
 #   OTEL_SERVICE_NAME — make sure it's exactly the ksvc name.
 overrides = {
+    # Currency's OTel SDK binds a Prometheus exporter inside the pod's
+    # network namespace. Knative's queue-proxy sidecar wants 9090 for its
+    # own metrics (hardcoded, not configurable). Just disable currency's
+    # exporter — we don't scrape it externally; Prometheus targets
+    # queue-proxy:9090 for revision request metrics anyway.
+    'OTEL_METRICS_EXPORTER': 'none',
+    # Belt-and-suspenders in case OTEL_METRICS_EXPORTER isn't honored:
+    # move whatever prometheus port currency uses out of 9090.
     'OTEL_EXPORTER_PROMETHEUS_PORT': '19090',
     'OTEL_SERVICE_NAME': '${TARGET}',
 }
@@ -128,13 +136,17 @@ if ! kubectl wait -n "${NS_APP}" "ksvc/${TARGET}" \
     echo "--- pods for revision ---"
     kubectl get pods -n "${NS_APP}" -l "serving.knative.dev/revision=${REV}"
     echo
-    echo "--- pod logs (user-container, last 50 lines) ---"
-    kubectl logs -n "${NS_APP}" -l "serving.knative.dev/revision=${REV}" \
-      -c user-container --tail=50 --all-containers=false 2>&1 || true
+    echo "--- pod env (currency container, as actually applied) ---"
+    kubectl get pod -n "${NS_APP}" -l "serving.knative.dev/revision=${REV}" \
+      -o jsonpath='{.items[0].spec.containers[?(@.name=="currency")].env}' \
+      | python3 -m json.tool 2>&1 | head -60 || true
     echo
-    echo "--- queue-proxy logs (last 30 lines) ---"
+    echo "--- pod logs (all containers, last 80 lines, prefixed) ---"
+    # Knative keeps the user's container name from the manifest (here:
+    # 'currency'), not 'user-container'. Use --all-containers so we don't
+    # have to guess; kubectl prefixes lines with the container name.
     kubectl logs -n "${NS_APP}" -l "serving.knative.dev/revision=${REV}" \
-      -c queue-proxy --tail=30 2>&1 | head -50 || true
+      --all-containers=true --prefix=true --tail=80 2>&1 | head -120 || true
     echo
     echo "--- recent events ---"
     kubectl get events -n "${NS_APP}" --sort-by=.lastTimestamp 2>&1 | tail -15
