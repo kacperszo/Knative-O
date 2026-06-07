@@ -37,11 +37,38 @@ envs = d['spec']['template']['spec']['containers'][0].get('env', [])
 out = []
 for e in envs:
     if 'valueFrom' in e:
+        # The chart uses fieldRef for OTEL_SERVICE_NAME (component label).
+        # Knative pods don't carry that label; replace with the ksvc name.
         if e['name'] == 'OTEL_SERVICE_NAME':
             out.append({'name': 'OTEL_SERVICE_NAME', 'value': '${TARGET}'})
-        # skip other fieldRefs — they reference labels we don't set
+        # Skip any other fieldRef — currency's C++ binary does
+        # std::string(getenv(X)) on some vars; an unset/null env there
+        # crashes with 'basic_string: construction from null is not valid'.
         continue
-    out.append({'name': e['name'], 'value': str(e.get('value', ''))})
+    v = e.get('value')
+    if v is None or v == '':
+        # Same crash risk if we propagate an empty 'value' as an env var.
+        continue
+    out.append({'name': e['name'], 'value': str(v)})
+
+# Overrides:
+#   OTEL_EXPORTER_PROMETHEUS_PORT — the chart sets 9090, which is Knative's
+#     queue-proxy metrics port. Co-locating both in the same pod's network
+#     namespace fails the queue-proxy with 'address already in use'. Move
+#     currency's exporter to 19090 (it isn't scraped from outside anyway —
+#     our Prometheus targets queue-proxy on 9090).
+#   OTEL_SERVICE_NAME — make sure it's exactly the ksvc name.
+overrides = {
+    'OTEL_EXPORTER_PROMETHEUS_PORT': '19090',
+    'OTEL_SERVICE_NAME': '${TARGET}',
+}
+idx = {e['name']: i for i, e in enumerate(out)}
+for k, v in overrides.items():
+    if k in idx:
+        out[idx[k]]['value'] = v
+    else:
+        out.append({'name': k, 'value': v})
+
 print(json.dumps(out, indent=2))
 ")
 log "  env vars copied: $(echo "${ENV_BLOCK}" | python3 -c 'import sys,json; print(len(json.load(sys.stdin)))')"
