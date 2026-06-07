@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # Scenario 5 — Diagnosis via the LLM (§3.3 #5).
-# Inject a clearly-bad image tag on `currency` so its pods crash, then ask
-# the agent to diagnose what's wrong. We don't have it auto-fix here (that's
-# scenario 7); we just exercise the read-only diagnosis path.
+# Replaces the image with a bad tag, asks the agent to diagnose, restores.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,32 +23,23 @@ BAD_IMAGE="${GOOD_IMAGE%:*}:does-not-exist"
 log "  good image: ${GOOD_IMAGE}"
 log "  bad image:  ${BAD_IMAGE}"
 
-info "Injecting bad image (this will trigger ImagePullBackOff)…"
-kubectl -n "${NS_APP}" patch "ksvc/${TARGET}" --type=merge -p "$(cat <<EOF
-{
-  "spec": {
-    "template": {
-      "metadata": { "annotations": { "fault.knative-o.dev/injected": "$(date +%s)" } },
-      "spec": { "containers": [ { "image": "${BAD_IMAGE}" } ] }
-    }
-  }
-}
-EOF
-)"
+info "Injecting bad image (this will trigger ImagePullBackOff on the new revision)"
+kubectl -n "${NS_APP}" patch "ksvc/${TARGET}" --type=json -p "[
+  {\"op\":\"add\",\"path\":\"/spec/template/metadata/annotations/fault.knative-o.dev~1injected\",\"value\":\"$(date +%s)\"},
+  {\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/image\",\"value\":\"${BAD_IMAGE}\"}
+]"
 
 log "  waiting ~30 s for the bad revision to fail…"
 sleep 30
 
-PROMPT=$(cat <<EOF
-The Knative Service \`${TARGET}\` in namespace \`${NS_APP}\` is failing.
-Diagnose what's wrong. Use the tools to:
-1. Look at the latest revision of ${TARGET}.
-2. Find the pod(s) for that revision.
-3. Read their status and events.
-Then tell me, in plain language: what's broken, and what's the minimal fix?
-Do NOT apply any change yet.
-EOF
-)
+PROMPT="The Knative Service named ${TARGET} in namespace ${NS_APP} is failing. Diagnose what is wrong.
+
+Use the resources_get tool on the Service, then on its latest Revision, then list pods with label serving.knative.dev/configuration=${TARGET} in ${NS_APP}, then look at their status and at recent events in ${NS_APP}.
+
+Then write a short plain-language report:
+  - What is broken?
+  - What is the minimal fix?
+Do NOT apply any change."
 
 info "Asking the agent to diagnose…"
 kubectl exec -n "${NS_AGENT}" deploy/langchain-agent -- \
@@ -59,20 +48,13 @@ kubectl exec -n "${NS_AGENT}" deploy/langchain-agent -- \
 
 echo
 info "Restoring the good image so the cluster goes back to a healthy state"
-kubectl -n "${NS_APP}" patch "ksvc/${TARGET}" --type=merge -p "$(cat <<EOF
-{
-  "spec": {
-    "template": {
-      "metadata": { "annotations": { "fault.knative-o.dev/cleared": "$(date +%s)" } },
-      "spec": { "containers": [ { "image": "${GOOD_IMAGE}" } ] }
-    }
-  }
-}
-EOF
-)"
+kubectl -n "${NS_APP}" patch "ksvc/${TARGET}" --type=json -p "[
+  {\"op\":\"add\",\"path\":\"/spec/template/metadata/annotations/fault.knative-o.dev~1cleared\",\"value\":\"$(date +%s)\"},
+  {\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/image\",\"value\":\"${GOOD_IMAGE}\"}
+]"
 
 ok "Scenario 5 complete"
 echo
-echo "What you saw: the agent walks the chain Service → Revision → Pod →"
-echo "Events through MCP tools, and reports the cause in natural language."
-echo "It did NOT mutate the cluster — diagnosis only."
+echo "What you saw: the agent walked Service → Revision → Pod → Events"
+echo "through MCP tools and reported the cause in natural language."
+echo "It did NOT mutate the cluster; diagnosis only."

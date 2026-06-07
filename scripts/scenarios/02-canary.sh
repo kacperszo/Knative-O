@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Scenario 2 — Canary traffic split via the LLM (§3.3 #2).
-# Asks the agent to create a new revision of `currency` and route 10% of
-# traffic to it, leaving 90% on the previous one. Requires scenario 1
-# (currency already on Knative).
+# Asks the agent to create a new revision of currency-knative and route 10%
+# of traffic to it, leaving 90% on the previous one. Requires scenario 1.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,7 +14,6 @@ TARGET=${KNATIVE_TARGET:-currency-knative}
 
 info "Scenario 2: 90/10 canary on ${TARGET}"
 
-# Prereq: currency must already be a Knative Service.
 if ! kubectl -n "${NS_APP}" get "ksvc/${TARGET}" >/dev/null 2>&1; then
   fail "ksvc/${TARGET} doesn't exist. Run scenario 1 first: make scenario-1"
 fi
@@ -24,30 +22,20 @@ CURRENT_REV=$(kubectl -n "${NS_APP}" get "ksvc/${TARGET}" \
   -o jsonpath='{.status.latestReadyRevisionName}')
 log "  current ready revision: ${CURRENT_REV}"
 
-PROMPT=$(cat <<EOF
-Create a new revision of the Knative Service \`${TARGET}\` in namespace
-\`${NS_APP}\` and split traffic so 90% goes to the current revision and 10%
-goes to the new one. Use the existing image and configuration; force a new
-revision by adding (or bumping) an annotation on the revision template, e.g.
-\`canary.knative-o.dev/revision: "v2"\` — that's enough to make Knative
-create a new revision without changing the image.
+PROMPT="Update the Knative Service named ${TARGET} in namespace ${NS_APP} to do a 90/10 canary traffic split.
 
-Resulting Service must have:
-spec:
-  template:
-    metadata:
-      annotations:
-        canary.knative-o.dev/revision: "v2"
-  traffic:
-  - revisionName: ${CURRENT_REV}
-    percent: 90
-  - latestRevision: true
-    percent: 10
+Step 1: Use the resources_get tool to read the FULL current Service spec.
+Step 2: Modify it as follows:
+  - Add or change spec.template.metadata.annotations to include canary.knative-o.dev/revision: v2 (this forces a new revision without changing the image).
+  - Set spec.traffic to exactly this list of two entries:
+      - revisionName: ${CURRENT_REV}
+        percent: 90
+      - latestRevision: true
+        percent: 10
+  - Preserve ALL other fields exactly as they are (containers, ports, env, resources, annotations on the Service itself, etc.). Do NOT drop or null out any existing field.
+Step 3: Apply the FULL modified Service spec via resources_create_or_update. The body MUST include spec.template.spec.containers from step 1, otherwise the Knative webhook will reject it as invalid.
 
-Echo the YAML you plan to apply, then APPLY IT IMMEDIATELY. Do not ask
-for confirmation — this is a non-interactive batch invocation.
-EOF
-)
+APPLY IT IMMEDIATELY. Do not ask for confirmation; this is a non-interactive batch invocation."
 
 info "Sending prompt to the agent…"
 kubectl exec -n "${NS_AGENT}" deploy/langchain-agent -- \
@@ -55,25 +43,23 @@ kubectl exec -n "${NS_AGENT}" deploy/langchain-agent -- \
   fail "Agent invocation failed — see kubectl logs -n ${NS_AGENT} deploy/langchain-agent"
 
 info "Waiting for traffic split (up to 2 min)…"
+TRAFFIC=""
 for _ in $(seq 1 24); do
   TRAFFIC=$(kubectl -n "${NS_APP}" get "ksvc/${TARGET}" \
     -o jsonpath='{range .status.traffic[*]}{.revisionName}={.percent}{"\n"}{end}' 2>/dev/null || true)
-  if [[ $(echo "${TRAFFIC}" | wc -l) -ge 2 ]]; then
+  if [[ $(printf '%s\n' "${TRAFFIC}" | grep -c .) -ge 2 ]]; then
     ok "  traffic split applied:"
-    echo "${TRAFFIC}" | sed 's/^/    /'
+    printf '%s\n' "${TRAFFIC}" | sed 's/^/    /'
     break
   fi
   sleep 5
 done
 
-if [[ $(echo "${TRAFFIC}" | wc -l) -lt 2 ]]; then
+if [[ $(printf '%s\n' "${TRAFFIC}" | grep -c .) -lt 2 ]]; then
   fail "Traffic split not reflected after 2 min. Current status: ${TRAFFIC}"
 fi
 
 ok "Scenario 2 complete"
 echo
-echo "In Grafana:"
-echo "  Dashboards → Knative Serving — Revision"
-echo "  Filter configuration=${TARGET}; you should see two revisions with"
-echo "  request rates roughly in the 9:1 ratio (load-generator hits currency"
-echo "  via the cart/checkout flow)."
+echo "In Grafana (make grafana → Knative-O — Revisions): you should see two"
+echo "revisions for ${TARGET} with request rates roughly in the 9:1 ratio."

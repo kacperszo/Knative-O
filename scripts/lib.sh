@@ -3,8 +3,20 @@
 
 set -euo pipefail
 
-# Resolve repo root from the script that sourced us.
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[1]:-$0}")/.." && pwd)"
+# Resolve repo root by walking up from the sourcing script until we hit a
+# Makefile. Doing `dirname .. && pwd` only works for one level up — it broke
+# when sourced from scripts/scenarios/*.sh, where REPO_ROOT pointed at
+# scripts/ instead of the repo root and the .env lookup failed.
+_find_repo_root() {
+  local d
+  d="$(cd "$(dirname "${BASH_SOURCE[2]:-${BASH_SOURCE[1]:-$0}}")" && pwd)"
+  while [[ "${d}" != "/" ]]; do
+    [[ -f "${d}/Makefile" ]] && { echo "${d}"; return 0; }
+    d="$(dirname "${d}")"
+  done
+  return 1
+}
+REPO_ROOT="$(_find_repo_root)" || { echo "lib.sh: cannot find repo root" >&2; exit 1; }
 DEPLOY_DIR="${REPO_ROOT}/deploy"
 
 if [[ -t 1 ]]; then

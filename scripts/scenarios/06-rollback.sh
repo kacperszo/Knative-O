@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # Scenario 6 — Rollback via the LLM (§3.3 #6).
-# Assumes scenario 2 was run (currency has at least 2 revisions and a 90/10
-# split). Asks the agent to send 100% of traffic back to the previous
-# revision.
+# Assumes scenario 2 was run (ksvc has >= 2 revisions).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,30 +21,26 @@ REVS=$(kubectl -n "${NS_APP}" get revision \
   -l "serving.knative.dev/service=${TARGET}" \
   --sort-by=.metadata.creationTimestamp \
   -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
-COUNT=$(echo "${REVS}" | wc -l | tr -d ' ')
+COUNT=$(printf '%s\n' "${REVS}" | grep -c .)
 if (( COUNT < 2 )); then
   fail "${TARGET} has only ${COUNT} revision. Run scenario 2 first to create a v2."
 fi
 
-# Previous = second-to-last
-PREV=$(echo "${REVS}" | tail -2 | head -1)
-LATEST=$(echo "${REVS}" | tail -1)
+PREV=$(printf '%s\n' "${REVS}" | tail -2 | head -1)
+LATEST=$(printf '%s\n' "${REVS}" | tail -1)
 log "  previous revision: ${PREV}"
 log "  latest revision:   ${LATEST}"
 
-PROMPT=$(cat <<EOF
-Roll back the Knative Service \`${TARGET}\` in namespace \`${NS_APP}\` so
-that 100% of traffic goes to revision \`${PREV}\` (the one before the most
-recent rollout). Patch .spec.traffic accordingly:
+PROMPT="Roll back the Knative Service named ${TARGET} in namespace ${NS_APP} so that 100% of traffic goes to revision ${PREV}.
 
-traffic:
-- revisionName: ${PREV}
-  percent: 100
+Step 1: Use resources_get to read the FULL current Service spec.
+Step 2: Replace spec.traffic with exactly one entry:
+  - revisionName: ${PREV}
+    percent: 100
+  Preserve ALL other fields exactly as they are (containers, ports, env, annotations, etc.). Do NOT drop or null out any existing field.
+Step 3: Apply the FULL modified Service via resources_create_or_update. The body MUST include spec.template.spec.containers from step 1.
 
-Echo the patch, then APPLY IT IMMEDIATELY. Do not ask for confirmation —
-this is a non-interactive batch invocation.
-EOF
-)
+APPLY IT IMMEDIATELY. Do not ask for confirmation."
 
 info "Sending prompt to the agent…"
 kubectl exec -n "${NS_AGENT}" deploy/langchain-agent -- \
@@ -54,6 +48,7 @@ kubectl exec -n "${NS_AGENT}" deploy/langchain-agent -- \
   fail "Agent invocation failed"
 
 info "Waiting for traffic to settle on ${PREV}…"
+PCT=""
 for _ in $(seq 1 12); do
   PCT=$(kubectl -n "${NS_APP}" get "ksvc/${TARGET}" \
     -o jsonpath="{.status.traffic[?(@.revisionName=='${PREV}')].percent}" 2>/dev/null || true)
@@ -66,12 +61,10 @@ for _ in $(seq 1 12); do
 done
 
 if [[ "${PCT:-}" != "100" ]]; then
-  fail "Rollback didn't take. Final traffic state:
-$(kubectl -n "${NS_APP}" get ksvc/${TARGET} -o jsonpath='{.status.traffic}')"
+  fail "Rollback didn't take. Final traffic state: $(kubectl -n ${NS_APP} get ksvc/${TARGET} -o jsonpath='{.status.traffic}')"
 fi
 
 ok "Scenario 6 complete"
 echo
-echo "In Grafana:"
-echo "  Dashboards → Knative Serving — Revision; the request-rate line for"
-echo "  ${LATEST} drops to zero within seconds while ${PREV} takes over."
+echo "In Grafana (make grafana → Knative-O — Revisions): request-rate line"
+echo "for ${LATEST} drops to zero while ${PREV} takes over."
