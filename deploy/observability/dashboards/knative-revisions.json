@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 39,
+  "version": 1,
+  "uid": "knative-o-revisions",
+  "title": "Knative-O — Revisions",
+  "tags": ["knative", "knative-o"],
+  "timezone": "browser",
+  "time": {"from": "now-30m", "to": "now"},
+  "refresh": "10s",
+  "annotations": {"list": []},
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(revision_app_request_count, namespace_name)",
+        "current": {"selected": false, "text": "astronomy-shop", "value": "astronomy-shop"},
+        "refresh": 1,
+        "includeAll": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "title": "Active pods (autoscaler)",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "targets": [{
+        "expr": "sum(autoscaler_actual_pods{namespace_name=~\"$namespace\"})",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 2,
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "title": "Request rate (revision, 1m)",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {"unit": "reqps"}},
+      "targets": [{
+        "expr": "sum(rate(revision_request_count{namespace_name=~\"$namespace\"}[1m]))",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 3,
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "title": "P95 request latency",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "targets": [{
+        "expr": "histogram_quantile(0.95, sum by (le) (rate(revision_request_latencies_bucket{namespace_name=~\"$namespace\"}[2m])))",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 4,
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "title": "Activator-buffered requests (cold starts)",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "targets": [{
+        "expr": "sum(increase(activator_request_count[5m]))",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 10,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "title": "Pods per revision",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [{
+        "expr": "sum by (configuration_name, revision_name) (autoscaler_actual_pods{namespace_name=~\"$namespace\"})",
+        "legendFormat": "{{configuration_name}}/{{revision_name}}",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 11,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "title": "Request rate per revision",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {"unit": "reqps"}},
+      "targets": [{
+        "expr": "sum by (configuration_name, revision_name) (rate(revision_request_count{namespace_name=~\"$namespace\"}[1m]))",
+        "legendFormat": "{{configuration_name}}/{{revision_name}}",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 12,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "title": "P95 latency per revision (s)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "targets": [{
+        "expr": "histogram_quantile(0.95, sum by (configuration_name, revision_name, le) (rate(revision_request_latencies_bucket{namespace_name=~\"$namespace\"}[2m])))",
+        "legendFormat": "{{configuration_name}}/{{revision_name}}",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 13,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "title": "Error ratio per revision (4xx+5xx / total)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}},
+      "targets": [{
+        "expr": "sum by (configuration_name, revision_name) (rate(revision_request_count{response_code_class!~\"2..|3..\",namespace_name=~\"$namespace\"}[2m])) / clamp_min(sum by (configuration_name, revision_name) (rate(revision_request_count{namespace_name=~\"$namespace\"}[2m])), 1e-9)",
+        "legendFormat": "{{configuration_name}}/{{revision_name}}",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 20,
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 20},
+      "title": "Activator requests (cold starts)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [{
+        "expr": "sum by (configuration_name) (rate(activator_request_count[1m]))",
+        "legendFormat": "{{configuration_name}}",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 21,
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 20},
+      "title": "Knative control plane up",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "max": 1}},
+      "targets": [{
+        "expr": "up{namespace=\"knative-serving\"}",
+        "legendFormat": "{{job}}",
+        "refId": "A"
+      }]
+    }
+  ]
+}

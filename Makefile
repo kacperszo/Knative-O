@@ -25,6 +25,9 @@ grafana: ## Port-forward our Grafana (monitoring/prom-grafana) to localhost:3000
 	@echo "Grafana → http://localhost:3000  (admin / your GRAFANA_ADMIN_PASSWORD)"
 	kubectl -n monitoring port-forward svc/prom-grafana 3000:80
 
+dashboards: ## Install/refresh the Knative-O Grafana dashboards
+	bash scripts/install-dashboards.sh
+
 shop: ## Port-forward the Astronomy Shop frontend-proxy to localhost:8081
 	@echo "Shop → http://localhost:8081  (Envoy /grafana/ inside the shop is disabled)"
 	kubectl -n astronomy-shop port-forward svc/frontend-proxy 8081:8080
