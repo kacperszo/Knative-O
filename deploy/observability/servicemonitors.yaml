@@ -20,6 +20,9 @@ spec:
       interval: 15s
 ---
 # Scrape queue-proxy sidecars (per-revision request metrics).
+# Earlier selector had `matchLabels: { serving.knative.dev/revisionUID: "" }`
+# which means "label value must equal empty string" — that matches zero pods.
+# Drop the matchLabels and keep only the Exists matchExpression.
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:
@@ -31,12 +34,18 @@ spec:
   namespaceSelector:
     matchNames: ["astronomy-shop"]
   selector:
-    matchLabels:
-      serving.knative.dev/revisionUID: "" # match any
     matchExpressions:
       - { key: serving.knative.dev/revisionUID, operator: Exists }
   podMetricsEndpoints:
+    # In Knative 1.19 the queue-proxy container exposes two metric ports:
+    #   http-usermetric  (9090) — own queue-proxy metrics
+    #   http-autometric  (9091) — request metrics (request count, latencies)
+    # Port names vary across versions; list both, Prometheus skips the one
+    # that isn't declared on the container.
     - port: http-usermetric
+      interval: 15s
+      path: /metrics
+    - port: http-autometric
       interval: 15s
       path: /metrics
 ---
