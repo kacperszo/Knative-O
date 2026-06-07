@@ -21,8 +21,28 @@ agent-debug: ## Diagnose a stuck agent rollout (describe + logs + RBAC check)
 knative-restart: ## Roll the Knative control plane to pick up config-observability changes
 	kubectl rollout restart -n knative-serving deployment/controller deployment/autoscaler deployment/activator deployment/webhook
 
-scenario-1: ## Run demo scenario #1 — cold-start a Knative Service via the LLM
+grafana: ## Port-forward our Grafana (monitoring/prom-grafana) to localhost:3000
+	@echo "Grafana → http://localhost:3000  (admin / your GRAFANA_ADMIN_PASSWORD)"
+	kubectl -n monitoring port-forward svc/prom-grafana 3000:80
+
+shop: ## Port-forward the Astronomy Shop frontend-proxy to localhost:8081
+	@echo "Shop → http://localhost:8081  (Envoy /grafana/ inside the shop is disabled)"
+	kubectl -n astronomy-shop port-forward svc/frontend-proxy 8081:8080
+
+scenario-1: ## Cold-start a Knative Service via the LLM (§3.3 #1)
 	bash scripts/scenarios/01-cold-start.sh
+scenario-2: ## Canary traffic split 90/10 (§3.3 #2)
+	bash scripts/scenarios/02-canary.sh
+scenario-3: ## Autoscaling tune (§3.3 #3)
+	bash scripts/scenarios/03-autoscaling.sh
+scenario-4: ## Scale-to-zero proof (§3.3 #4)
+	bash scripts/scenarios/04-scale-to-zero.sh
+scenario-5: ## Diagnosis: agent finds why a service is failing (§3.3 #5)
+	bash scripts/scenarios/05-diagnosis.sh
+scenario-6: ## Rollback to previous revision (§3.3 #6)
+	bash scripts/scenarios/06-rollback.sh
+scenario-7: ## Reactive autoscale via Alertmanager → agent (§3.3 #7)
+	bash scripts/scenarios/07-reactive.sh
 
 agent-dev: ## Run the agent locally against current kubeconfig (no docker)
 	cd agent && pip install -e . && knative-o-agent serve

@@ -289,6 +289,34 @@ wrong and are now fixed (verified against the live upstream):
 Roughly in the order I'd tackle them. Each bullet is small enough to be
 one PR.
 
+## 9.5. Demo scenarios
+
+After `make bootstrap` is green, each of these is a single command. The
+flow assumes you run them in order; later scenarios build on the state
+left by earlier ones.
+
+| Cmd | Scenario | Prereq |
+|-----|----------|--------|
+| `make scenario-1` | Cold-start `currency` on Knative (the agent generates a Knative `Service` from the existing Deployment image) | bootstrap |
+| `make scenario-2` | Canary: 90/10 traffic split between two revisions | #1 |
+| `make scenario-3` | Tune autoscaling annotations (target, max-scale) | #1 |
+| `make scenario-4` | Scale-to-zero proof: pause load-gen, watch pods go to 0, restore | #1 |
+| `make scenario-5` | Diagnose a fault the script injects (bad image), agent reads pod state | #1 |
+| `make scenario-6` | Rollback to previous revision | #2 |
+| `make scenario-7` | Reactive: synthetic Alertmanager payload → agent (auto mode) → patch | #1 |
+
+Quick UI access:
+
+```bash
+make grafana   # our Grafana (monitoring/prom-grafana) → http://localhost:3000
+make shop      # Astronomy Shop frontend-proxy → http://localhost:8081
+```
+
+> The bundled Grafana inside the Astronomy Shop chart is disabled (we
+> have our own with Knative dashboards). Hitting `/grafana/` on the
+> shop's `frontend-proxy` therefore returns Envoy's
+> `no healthy upstream`. Use `make grafana`.
+
 ### Must-have before the live demo
 
 - **End-to-end install validation.** YAML/Python parse cleanly and shell
