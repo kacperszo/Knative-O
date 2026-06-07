@@ -23,40 +23,48 @@ info "Smoke: Prometheus is scraping the Knative control plane"
 # PodMonitor matches nothing yet. Knative control-plane targets prove our
 # monitoring pipeline works.
 #
-# We query Prometheus through the apiserver proxy so we don't depend on wget
-# being present in the Prometheus container (recent kube-prometheus-stack
-# uses a distroless image with no wget/curl). The Service name varies with
-# chart version / fullnameOverride, so we probe a few likely label sets.
-PROM_SVC=""
+# Query through the apiserver POD proxy (vs service proxy): pod proxy accepts
+# port NUMBERS, service proxy requires the named port — which varies with
+# chart version. Pod proxy needs no in-container wget/curl either, so it
+# works with the distroless Prometheus image kube-prometheus-stack uses now.
+PROM_POD=""
 for sel in \
     "app.kubernetes.io/name=prometheus" \
     "app=kube-prometheus-stack-prometheus" \
-    "operator.prometheus.io/name" ; do
-  PROM_SVC=$(kubectl get svc -n monitoring -l "${sel}" \
+    "app.kubernetes.io/managed-by=prometheus-operator" ; do
+  PROM_POD=$(kubectl get pod -n monitoring -l "${sel}" \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-  [[ -n "${PROM_SVC}" ]] && break
+  [[ -n "${PROM_POD}" ]] && break
 done
-[[ -n "${PROM_SVC}" ]] || fail "no Prometheus Service found in monitoring (tried multiple label sets)"
-log "  via svc ${PROM_SVC}"
+[[ -n "${PROM_POD}" ]] || fail "no Prometheus pod found in monitoring"
+log "  via pod ${PROM_POD}"
 
 # Pre-encoded PromQL: up{namespace="knative-serving"}
-URL="/api/v1/namespaces/monitoring/services/${PROM_SVC}:9090/proxy/api/v1/query"
+URL="/api/v1/namespaces/monitoring/pods/${PROM_POD}:9090/proxy/api/v1/query"
 URL+="?query=up%7Bnamespace%3D%22knative-serving%22%7D"
-RESP=$(kubectl get --raw "${URL}" 2>&1) || \
+
+# Defensive `if !` everywhere — bash on macOS has well-known set -e + $(...)
+# quirks; we never want a silent abort on a check that's supposed to fail loud.
+RESP=""
+if ! RESP=$(kubectl get --raw "${URL}" 2>&1); then
   fail "Prometheus API proxy failed: ${RESP}"
-echo "${RESP}" | grep -q '"status":"success"' || \
+fi
+if ! echo "${RESP}" | grep -q '"status":"success"'; then
   fail "unexpected Prometheus response: ${RESP}"
-# Count series whose latest value == "1" (target up).
-ACTIVE=$(echo "${RESP}" | grep -oE '"value":\[[^]]*"1"\]' | wc -l)
-(( ACTIVE > 0 )) || \
-  fail "Prometheus has no healthy targets in knative-serving (raw response: ${RESP})"
+fi
+ACTIVE=$(echo "${RESP}" | grep -oE '"value":\[[^]]*"1"\]' | wc -l | tr -d ' ')
+if [[ "${ACTIVE}" == "0" ]]; then
+  fail "Prometheus has no healthy targets in knative-serving (response: ${RESP})"
+fi
 ok "  ${ACTIVE} knative-serving targets up"
 
 info "Smoke: agent /healthz responds"
-AGENT_POD="$(kubectl get pod -n mcp -l app.kubernetes.io/name=langchain-agent -o jsonpath='{.items[0].metadata.name}')"
-# Same trick: use apiserver pod proxy so we don't need any in-container client.
-kubectl get --raw "/api/v1/namespaces/mcp/pods/${AGENT_POD}:8080/proxy/healthz" >/dev/null \
-  || fail "agent /healthz did not respond"
+AGENT_POD=$(kubectl get pod -n mcp -l app.kubernetes.io/name=langchain-agent \
+  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+[[ -n "${AGENT_POD}" ]] || fail "no langchain-agent pod found in mcp namespace"
+if ! kubectl get --raw "/api/v1/namespaces/mcp/pods/${AGENT_POD}:8080/proxy/healthz" >/dev/null 2>&1; then
+  fail "agent /healthz did not respond"
+fi
 ok "  agent healthy"
 
 ok "Smoke passed"
