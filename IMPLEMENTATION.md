@@ -231,6 +231,16 @@ wrong and are now fixed (verified against the live upstream):
   `RollingUpdate` (maxSurge=1, maxUnavailable=0): the new pod spins up
   and goes Ready before the old one is killed. Also bumped
   `wait_rollout` to 8 min so MCP init has real headroom.
+- **`ServiceAccount "jaeger" … cannot be imported into the current
+  release: invalid ownership metadata`** in phase 7. Classic orphan-Helm
+  state: a previous run crashed *during* the Astronomy Shop install, so
+  Helm wrote some objects but never recorded a release. The next install
+  sees `Release does not exist`, tries to re-create those objects, and
+  refuses to "take over" the existing ones because they lack the
+  `meta.helm.sh/release-*` annotations. Phase 7 now detects this
+  (`helm status` fails but tell-tale ServiceAccounts exist) and wipes
+  `astronomy-shop` before installing; the namespace-scoped agent RBAC is
+  re-applied right after.
 - **`RuntimeError: ANTHROPIC_API_KEY is required for Claude models`** even
   with `OPENAI_API_KEY` set. Two stacked bugs: (1) bootstrap created the
   secret with `--from-literal=ANTHROPIC_API_KEY=""` when the env var was

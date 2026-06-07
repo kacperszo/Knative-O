@@ -153,7 +153,25 @@ ok "Agent up"
 # converting a service to Knative is the LLM's job (demo scenario #1), with a
 # reference manifest in deploy/astronomy-shop/knative/.
 info "Phase 7: Astronomy Shop (Helm)"
+
+# Recovery: if a previous run crashed mid-install, helm wrote objects but
+# never recorded a release. The next install then fails with
+# "X cannot be imported into the current release: invalid ownership metadata"
+# because the leftover objects lack the meta.helm.sh/release-* annotations.
+# Detect that and wipe the namespace; phase 6's astronomy-shop RBAC gets
+# re-applied right after.
+if ! helm status -n astronomy-shop astronomy-shop >/dev/null 2>&1; then
+  if kubectl -n astronomy-shop get sa 2>/dev/null \
+       | grep -qE "(jaeger|prometheus|grafana|opentelemetry-demo|otel-collector)"; then
+    warn "Orphan Helm objects in astronomy-shop without a release — wiping namespace"
+    kubectl delete namespace astronomy-shop --wait=true --ignore-not-found
+  fi
+fi
+
 kubectl create namespace astronomy-shop --dry-run=client -o yaml | kubectl apply -f -
+# Re-apply the agent's namespace-scoped RBAC in case the ns was just recreated.
+kubectl apply -f "${DEPLOY_DIR}/mcp/rbac.yaml"
+
 # shellcheck disable=SC2046
 helm upgrade --install astronomy-shop open-telemetry/opentelemetry-demo \
   --namespace astronomy-shop \
