@@ -24,7 +24,7 @@ case "${DEPLOY_TARGET:-local}" in
 esac
 
 # At least one LLM key must be present, and it must match the chosen model.
-LLM_MODEL="${LLM_MODEL:-claude-sonnet-4-6}"
+LLM_MODEL="${LLM_MODEL:-gpt-4o}"
 case "${LLM_MODEL}" in
   claude*|anthropic*)
     [[ -n "${ANTHROPIC_API_KEY:-}" ]] || \

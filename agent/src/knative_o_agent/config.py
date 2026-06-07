@@ -17,7 +17,7 @@ def _empty_to_none(v: object) -> object:
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    llm_model: str = "claude-sonnet-4-6"
+    llm_model: str = "gpt-4o"
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
 

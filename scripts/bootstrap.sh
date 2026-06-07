@@ -134,7 +134,7 @@ kubectl apply -f "${DEPLOY_DIR}/mcp/service.yaml"
 kubectl apply -f "${DEPLOY_DIR}/mcp/networkpolicy.yaml"
 # Pin the image and the LLM_MODEL (the Deployment ships a default; .env wins).
 kubectl set image -n mcp deployment/langchain-agent "agent=${AGENT_IMAGE}"
-kubectl set env   -n mcp deployment/langchain-agent "LLM_MODEL=${LLM_MODEL:-claude-sonnet-4-6}"
+kubectl set env   -n mcp deployment/langchain-agent "LLM_MODEL=${LLM_MODEL:-gpt-4o}"
 # MCP init takes ~2 min the first time + image pull/load + termination of the
 # previous pod on re-runs. 8 minutes is realistic; under that the timer hits
 # mid-rollover and the diagnostics show a Terminating pod.

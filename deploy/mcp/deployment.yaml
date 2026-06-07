@@ -43,7 +43,7 @@ spec:
               containerPort: 8080
           env:
             - name: LLM_MODEL
-              value: claude-sonnet-4-6
+              value: gpt-4o
             - name: AGENT_MODE
               value: confirm
             - name: DEMO_NAMESPACE
