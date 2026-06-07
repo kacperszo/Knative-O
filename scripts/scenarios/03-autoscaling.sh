@@ -32,13 +32,14 @@ autoscaling settings so it scales out sooner under load:
 - autoscaling.knative.dev/metric: "concurrency"
 
 The change goes on .spec.template.metadata.annotations of the Service.
-Echo the patch you plan to apply, then apply it.
+Echo the patch you plan to apply, then APPLY IT IMMEDIATELY. Do not ask
+for confirmation — this is a non-interactive batch invocation.
 EOF
 )
 
 info "Sending prompt to the agent…"
 kubectl exec -n "${NS_AGENT}" deploy/langchain-agent -- \
-  knative-o-agent prompt "${PROMPT}" || \
+  env AGENT_MODE=auto knative-o-agent prompt "${PROMPT}" || \
   fail "Agent invocation failed"
 
 info "Verifying annotations"

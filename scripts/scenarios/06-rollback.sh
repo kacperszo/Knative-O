@@ -43,13 +43,14 @@ traffic:
 - revisionName: ${PREV}
   percent: 100
 
-Echo the patch, then apply it.
+Echo the patch, then APPLY IT IMMEDIATELY. Do not ask for confirmation —
+this is a non-interactive batch invocation.
 EOF
 )
 
 info "Sending prompt to the agent…"
 kubectl exec -n "${NS_AGENT}" deploy/langchain-agent -- \
-  knative-o-agent prompt "${PROMPT}" || \
+  env AGENT_MODE=auto knative-o-agent prompt "${PROMPT}" || \
   fail "Agent invocation failed"
 
 info "Waiting for traffic to settle on ${PREV}…"

@@ -54,7 +54,7 @@ EOF
 
 info "Asking the agent to diagnose…"
 kubectl exec -n "${NS_AGENT}" deploy/langchain-agent -- \
-  knative-o-agent prompt "${PROMPT}" || \
+  env AGENT_MODE=auto knative-o-agent prompt "${PROMPT}" || \
   fail "Agent invocation failed"
 
 echo

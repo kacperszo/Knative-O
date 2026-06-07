@@ -55,14 +55,15 @@ Manifest to apply (apiVersion: serving.knative.dev/v1, kind: Service):
       - name: OTEL_EXPORTER_OTLP_ENDPOINT
         value: http://otel-collector:4317
 
-Echo the YAML you plan to apply, then apply it. Use the
-\`resources_create_or_update\` tool.
+Echo the YAML you plan to apply, then APPLY IT IMMEDIATELY using the
+\`resources_create_or_update\` tool. Do not ask for confirmation — this is
+a non-interactive batch invocation.
 EOF
 )
 
 info "Sending prompt to the agent…"
 kubectl exec -n "${NS_AGENT}" deploy/langchain-agent -- \
-  knative-o-agent prompt "${PROMPT}" || \
+  env AGENT_MODE=auto knative-o-agent prompt "${PROMPT}" || \
   fail "Agent invocation failed — see 'kubectl logs -n ${NS_AGENT} deploy/langchain-agent'"
 
 info "Waiting for ksvc/${TARGET} to report Ready (up to 3 min)…"
