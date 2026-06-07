@@ -28,6 +28,12 @@ grafana: ## Port-forward our Grafana (monitoring/prom-grafana) to localhost:3000
 dashboards: ## Install/refresh the Knative-O Grafana dashboards
 	bash scripts/install-dashboards.sh
 
+traffic: ## Send sustained traffic to currency-knative so dashboards have data (5 req/s for 2 min)
+	bash scripts/demo-traffic.sh
+
+metrics: ## List which Knative-related metrics Prometheus actually has
+	bash scripts/prom-metrics.sh
+
 shop: ## Port-forward the Astronomy Shop frontend-proxy to localhost:8081
 	@echo "Shop → http://localhost:8081  (Envoy /grafana/ inside the shop is disabled)"
 	kubectl -n astronomy-shop port-forward svc/frontend-proxy 8081:8080
