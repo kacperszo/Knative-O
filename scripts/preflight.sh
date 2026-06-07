@@ -23,10 +23,24 @@ case "${DEPLOY_TARGET:-local}" in
     ;;
 esac
 
-# At least one LLM key must be present.
-if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${OPENAI_API_KEY:-}" ]]; then
-  fail "Neither ANTHROPIC_API_KEY nor OPENAI_API_KEY is set in .env"
-fi
+# At least one LLM key must be present, and it must match the chosen model.
+LLM_MODEL="${LLM_MODEL:-claude-sonnet-4-6}"
+case "${LLM_MODEL}" in
+  claude*|anthropic*)
+    [[ -n "${ANTHROPIC_API_KEY:-}" ]] || \
+      fail "LLM_MODEL='${LLM_MODEL}' needs ANTHROPIC_API_KEY in .env (you can also switch LLM_MODEL to e.g. gpt-4o if you only have OPENAI_API_KEY)"
+    ;;
+  gpt*|o1*|o3*|openai*)
+    [[ -n "${OPENAI_API_KEY:-}" ]] || \
+      fail "LLM_MODEL='${LLM_MODEL}' needs OPENAI_API_KEY in .env"
+    ;;
+  *)
+    if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${OPENAI_API_KEY:-}" ]]; then
+      fail "Neither ANTHROPIC_API_KEY nor OPENAI_API_KEY is set in .env"
+    fi
+    warn "Unknown LLM_MODEL='${LLM_MODEL}' — proceeding, but verify the SDK supports it"
+    ;;
+esac
 
 # Webhook token must not be the default — it's the only authentication on /alerts.
 if [[ "${WEBHOOK_TOKEN:-}" == "change-me-to-a-random-string" || -z "${WEBHOOK_TOKEN:-}" ]]; then

@@ -113,21 +113,28 @@ kubectl apply -f "${DEPLOY_DIR}/mcp/namespace.yaml"
 # namespace, which the app install (phase 7) creates. Create it here too so
 # phase 6 can bind into it; the create is idempotent.
 kubectl create namespace astronomy-shop --dry-run=client -o yaml | kubectl apply -f -
-# Render Secret from .env (kubectl apply --dry-run | apply) so we never commit secrets.
+# Render Secret from .env. Skip empty values — an empty --from-literal would
+# still create the key as "" in the secret, which the Deployment would mount
+# as e.g. ANTHROPIC_API_KEY="" and the agent would then believe Claude is
+# configured but has no key.
+SECRET_ARGS=()
+for k in ANTHROPIC_API_KEY OPENAI_API_KEY LANGCHAIN_API_KEY; do
+  val="${!k:-}"
+  [[ -n "${val}" ]] && SECRET_ARGS+=("--from-literal=${k}=${val}")
+done
+SECRET_ARGS+=("--from-literal=WEBHOOK_TOKEN=${WEBHOOK_TOKEN}")
 kubectl create secret generic agent-secrets \
   --namespace mcp \
-  --from-literal=ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
-  --from-literal=OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
-  --from-literal=WEBHOOK_TOKEN="${WEBHOOK_TOKEN}" \
-  --from-literal=LANGCHAIN_API_KEY="${LANGCHAIN_API_KEY:-}" \
+  "${SECRET_ARGS[@]}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl apply -f "${DEPLOY_DIR}/mcp/rbac.yaml"
 kubectl apply -f "${DEPLOY_DIR}/mcp/deployment.yaml"
 kubectl apply -f "${DEPLOY_DIR}/mcp/service.yaml"
 kubectl apply -f "${DEPLOY_DIR}/mcp/networkpolicy.yaml"
-# Pin the image to the (possibly overridden) AGENT_IMAGE.
+# Pin the image and the LLM_MODEL (the Deployment ships a default; .env wins).
 kubectl set image -n mcp deployment/langchain-agent "agent=${AGENT_IMAGE}"
+kubectl set env   -n mcp deployment/langchain-agent "LLM_MODEL=${LLM_MODEL:-claude-sonnet-4-6}"
 if ! wait_rollout deployment langchain-agent mcp 5m; then
   warn "Agent rollout failed — dumping diagnostics:"
   bash "${SCRIPT_DIR}/agent-debug.sh" || true

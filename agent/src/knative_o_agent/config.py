@@ -1,6 +1,17 @@
 from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _empty_to_none(v: object) -> object:
+    # Kubernetes secretKeyRef with optional=True omits the env var when the
+    # key is missing, but if the key exists with an empty value the env var
+    # is set to "". Treat that as unset so the "Claude needs Anthropic key"
+    # check doesn't fire on an explicitly empty string.
+    if isinstance(v, str) and not v.strip():
+        return None
+    return v
 
 
 class Settings(BaseSettings):
@@ -28,6 +39,10 @@ class Settings(BaseSettings):
     langchain_tracing_v2: bool = False
     langchain_api_key: str | None = None
     langchain_project: str = "knative-o"
+
+    _empty_to_none = field_validator(
+        "anthropic_api_key", "openai_api_key", "langchain_api_key", mode="before"
+    )(_empty_to_none)
 
     @property
     def provider(self) -> Literal["anthropic", "openai"]:

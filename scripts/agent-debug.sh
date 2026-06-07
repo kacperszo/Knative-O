@@ -42,8 +42,10 @@ for pod in $(kubectl get pods -n "${NS}" -l app.kubernetes.io/name="${DEP}" -o n
 
   echo
   echo "--- /readyz (gated on agent + MCP init) ---"
-  kubectl exec -n "${NS}" "${pod}" -- wget -qO- http://localhost:8080/readyz 2>&1 || \
-    echo "(readyz unreachable — uvicorn may not be listening yet)"
+  # The image is python:slim — no wget/curl. Use Python's urllib instead.
+  kubectl exec -n "${NS}" "${pod}" -- python3 -c \
+    "import sys,urllib.request as u;r=u.urlopen('http://localhost:8080/readyz');print(r.status);print(r.read().decode())" \
+    2>&1 || echo "(readyz unreachable — uvicorn may not be listening yet)"
 
   echo
   echo "--- MCP binary smoke test (in-cluster) ---"

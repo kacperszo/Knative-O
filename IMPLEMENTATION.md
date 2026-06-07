@@ -222,6 +222,19 @@ wrong and are now fixed (verified against the live upstream):
   dumps describe + events + recent logs + previous-container logs +
   `/readyz` + MCP binary smoke + RBAC `can-i` checks in one go; bootstrap
   runs it automatically when the rollout fails.
+- **`RuntimeError: ANTHROPIC_API_KEY is required for Claude models`** even
+  with `OPENAI_API_KEY` set. Two stacked bugs: (1) bootstrap created the
+  secret with `--from-literal=ANTHROPIC_API_KEY=""` when the env var was
+  empty, which made the Deployment mount `ANTHROPIC_API_KEY=""` (pydantic
+  loaded that as `""`, not None, so the "needs Claude key" check fired);
+  (2) `LLM_MODEL` defaulted to `claude-sonnet-4-6` regardless of which key
+  the user actually had. Fixes: bootstrap skips empty `--from-literal`s
+  (no phantom empty key in the secret); `Settings` strips empty strings to
+  None; preflight matches `LLM_MODEL` to the available key and fails fast
+  with a clear message if they're misaligned; bootstrap also pins
+  `LLM_MODEL` from `.env` onto the Deployment so it isn't stuck on the
+  default. Also fixed `agent-debug.sh` calling `wget` inside the
+  python:slim image (no `wget`) — it now uses Python's `urllib`.
 
 ## 9. What's left to do
 
