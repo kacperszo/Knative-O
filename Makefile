@@ -15,6 +15,9 @@ teardown: ## Delete kind cluster / undo cloud install
 smoke: ## Run the post-install checks
 	bash scripts/smoke.sh
 
+agent-debug: ## Diagnose a stuck agent rollout (describe + logs + RBAC check)
+	bash scripts/agent-debug.sh
+
 agent-dev: ## Run the agent locally against current kubeconfig (no docker)
 	cd agent && pip install -e . && knative-o-agent serve
 

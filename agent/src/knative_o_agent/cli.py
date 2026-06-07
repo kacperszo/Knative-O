@@ -32,24 +32,13 @@ def serve() -> None:
     """Run the FastAPI webhook + keep the agent process alive."""
     _configure_logging()
     settings = Settings()
-
-    async def _main() -> None:
-        agent = KnativeAgent(settings)
-        await agent.start()
-        try:
-            api = build_app(agent, settings)
-            config = uvicorn.Config(
-                api,
-                host=settings.webhook_host,
-                port=settings.webhook_port,
-                log_level="info",
-            )
-            server = uvicorn.Server(config)
-            await server.serve()
-        finally:
-            await agent.stop()
-
-    asyncio.run(_main())
+    api = build_app(settings)
+    uvicorn.run(
+        api,
+        host=settings.webhook_host,
+        port=settings.webhook_port,
+        log_level="info",
+    )
 
 
 @app.command()

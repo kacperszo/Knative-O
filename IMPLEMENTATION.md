@@ -211,6 +211,17 @@ wrong and are now fixed (verified against the live upstream):
   `Role`/`RoleBinding` live in `astronomy-shop`, which only the app install
   (phase 7) created — so phase 6 failed with "namespace not found". Phase 6
   now creates `astronomy-shop` first (idempotently).
+- **"deployment exceeded its progress deadline"** with no obvious cause.
+  Old startup order was `agent.start()` (spawn MCP, list tools) **before**
+  uvicorn ever bound the port, so any MCP failure looked like a generic
+  deadline timeout. Refactored to FastAPI `lifespan`: uvicorn binds first,
+  agent init runs as a background task. `/healthz` is liveness (process
+  alive); `/readyz` is gated on agent init and returns the actual error
+  (503 + body) when MCP fails. The pod no longer CrashLoops on MCP errors,
+  so `kubectl logs` works. `make agent-debug` (or `scripts/agent-debug.sh`)
+  dumps describe + events + recent logs + previous-container logs +
+  `/readyz` + MCP binary smoke + RBAC `can-i` checks in one go; bootstrap
+  runs it automatically when the rollout fails.
 
 ## 9. What's left to do
 

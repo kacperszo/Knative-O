@@ -56,12 +56,22 @@ spec:
               value: "false"
             - name: LANGCHAIN_API_KEY
               valueFrom: { secretKeyRef: { name: agent-secrets, key: LANGCHAIN_API_KEY, optional: true } }
-          readinessProbe:
-            httpGet: { path: /healthz, port: webhook }
-            initialDelaySeconds: 3
+          # /healthz only checks the process is up; uvicorn binds immediately,
+          # so liveness goes green within seconds. We do NOT want MCP problems
+          # to CrashLoop the pod — we want it staying up so you can read logs.
           livenessProbe:
             httpGet: { path: /healthz, port: webhook }
-            initialDelaySeconds: 15
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 5
+          # /readyz is gated on agent init (MCP subprocess + tool listing).
+          # The deployment becomes Available only once that succeeds; if it
+          # fails, the pod stays running so `kubectl logs` shows the cause.
+          readinessProbe:
+            httpGet: { path: /readyz, port: webhook }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 60   # ≈ 5 min before deployment progress deadline trips
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits: { memory: 512Mi }

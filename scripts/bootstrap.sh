@@ -128,7 +128,11 @@ kubectl apply -f "${DEPLOY_DIR}/mcp/service.yaml"
 kubectl apply -f "${DEPLOY_DIR}/mcp/networkpolicy.yaml"
 # Pin the image to the (possibly overridden) AGENT_IMAGE.
 kubectl set image -n mcp deployment/langchain-agent "agent=${AGENT_IMAGE}"
-wait_rollout deployment langchain-agent mcp 5m
+if ! wait_rollout deployment langchain-agent mcp 5m; then
+  warn "Agent rollout failed — dumping diagnostics:"
+  bash "${SCRIPT_DIR}/agent-debug.sh" || true
+  fail "Agent did not become Ready. See output above."
+fi
 ok "Agent up"
 
 # ----- Phase 7: Astronomy Shop (via the official Helm chart) -----
