@@ -200,6 +200,13 @@ wrong and are now fixed (verified against the live upstream):
   sets `MCP_CLUSTER_PROVIDER=in-cluster`, which the agent passes as
   `--cluster-provider in-cluster`. Left unset for local `agent-dev` so it
   uses your kubeconfig.
+- **MCP server still failed with "in-cluster manager cannot be used
+  outside of a cluster"** even with the flag set. Root cause: MCP's stdio
+  client only inherits a tiny POSIX env subset
+  (`HOME, LOGNAME, PATH, SHELL, TERM, USER`) into the server subprocess,
+  so `KUBERNETES_SERVICE_HOST` / `KUBERNETES_SERVICE_PORT` were missing
+  and `rest.InClusterConfig()` bailed. The agent now explicitly passes
+  those (plus proxy vars) through to the MCP subprocess.
 - **Phase 6 needed a namespace created in phase 7.** The agent's write
   `Role`/`RoleBinding` live in `astronomy-shop`, which only the app install
   (phase 7) created — so phase 6 failed with "namespace not found". Phase 6

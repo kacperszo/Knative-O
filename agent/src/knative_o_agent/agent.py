@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -16,6 +17,27 @@ from .config import Settings
 from .prompts import render as render_system
 
 log = structlog.get_logger()
+
+# MCP's stdio client (DEFAULT_INHERITED_ENV_VARS) only forwards a tiny POSIX
+# set — HOME/LOGNAME/PATH/SHELL/TERM/USER. We need to add the Kubernetes
+# in-cluster vars and proxy settings ourselves, otherwise
+# kubernetes-mcp-server's InClusterConfig() fails with
+# "in-cluster manager cannot be used outside of a cluster".
+_MCP_EXTRA_ENV_VARS = (
+    "KUBERNETES_SERVICE_HOST",
+    "KUBERNETES_SERVICE_PORT",
+    "KUBERNETES_SERVICE_PORT_HTTPS",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+)
+
+
+def _mcp_env_passthrough() -> dict[str, str]:
+    return {k: v for k in _MCP_EXTRA_ENV_VARS if (v := os.environ.get(k)) is not None}
 
 
 def _build_llm(settings: Settings) -> BaseChatModel:
@@ -60,6 +82,7 @@ class KnativeAgent:
                 "kubernetes": {
                     "command": self.settings.mcp_server_command,
                     "args": args,
+                    "env": _mcp_env_passthrough(),
                     "transport": "stdio",
                 }
             }
