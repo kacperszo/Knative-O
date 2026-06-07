@@ -135,7 +135,10 @@ kubectl apply -f "${DEPLOY_DIR}/mcp/networkpolicy.yaml"
 # Pin the image and the LLM_MODEL (the Deployment ships a default; .env wins).
 kubectl set image -n mcp deployment/langchain-agent "agent=${AGENT_IMAGE}"
 kubectl set env   -n mcp deployment/langchain-agent "LLM_MODEL=${LLM_MODEL:-claude-sonnet-4-6}"
-if ! wait_rollout deployment langchain-agent mcp 5m; then
+# MCP init takes ~2 min the first time + image pull/load + termination of the
+# previous pod on re-runs. 8 minutes is realistic; under that the timer hits
+# mid-rollover and the diagnostics show a Terminating pod.
+if ! wait_rollout deployment langchain-agent mcp 8m; then
   warn "Agent rollout failed — dumping diagnostics:"
   bash "${SCRIPT_DIR}/agent-debug.sh" || true
   fail "Agent did not become Ready. See output above."

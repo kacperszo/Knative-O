@@ -9,7 +9,14 @@ metadata:
 spec:
   replicas: 1
   strategy:
-    type: Recreate
+    # RollingUpdate: spin up the new pod first, wait for /readyz, then kill
+    # the old one. Recreate forced an empty window while the old (often
+    # broken) pod terminated before the new one even started — fine for
+    # state, but bad UX because wait_rollout timed out mid-rollover.
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: langchain-agent

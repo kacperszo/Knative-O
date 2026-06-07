@@ -222,6 +222,15 @@ wrong and are now fixed (verified against the live upstream):
   dumps describe + events + recent logs + previous-container logs +
   `/readyz` + MCP binary smoke + RBAC `can-i` checks in one go; bootstrap
   runs it automatically when the rollout fails.
+- **Rollout timed out mid-rollover.** The deployment used `strategy:
+  Recreate`, which scales the old pod to 0 first and only then creates
+  the new one. With FastAPI graceful shutdown + a fresh ~2 min MCP init,
+  the 5-min `wait_rollout` window hit *while the old pod was Terminating
+  and the new one didn't exist yet* — so diagnostics showed a
+  Terminating pod and `NewReplicaSet: <none>`. Switched to
+  `RollingUpdate` (maxSurge=1, maxUnavailable=0): the new pod spins up
+  and goes Ready before the old one is killed. Also bumped
+  `wait_rollout` to 8 min so MCP init has real headroom.
 - **`RuntimeError: ANTHROPIC_API_KEY is required for Claude models`** even
   with `OPENAI_API_KEY` set. Two stacked bugs: (1) bootstrap created the
   secret with `--from-literal=ANTHROPIC_API_KEY=""` when the env var was
