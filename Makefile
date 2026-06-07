@@ -21,6 +21,9 @@ agent-debug: ## Diagnose a stuck agent rollout (describe + logs + RBAC check)
 knative-restart: ## Roll the Knative control plane to pick up config-observability changes
 	kubectl rollout restart -n knative-serving deployment/controller deployment/autoscaler deployment/activator deployment/webhook
 
+scenario-1: ## Run demo scenario #1 — cold-start a Knative Service via the LLM
+	bash scripts/scenarios/01-cold-start.sh
+
 agent-dev: ## Run the agent locally against current kubeconfig (no docker)
 	cd agent && pip install -e . && knative-o-agent serve
 

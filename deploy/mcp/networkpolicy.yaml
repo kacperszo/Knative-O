@@ -1,5 +1,9 @@
 ---
-# Only Alertmanager from the monitoring namespace may hit the webhook.
+# Ingress on the agent's webhook port. Originally restricted to Alertmanager
+# only, but that also blocked apiserver pod-proxy traffic (used by `kubectl
+# get --raw .../proxy/...`, port-forward, smoke checks, agent-debug). For a
+# local demo we open port 8080 cluster-wide; /alerts is still protected by
+# the bearer-token check in the FastAPI app.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -11,14 +15,7 @@ spec:
       app.kubernetes.io/name: langchain-agent
   policyTypes: ["Ingress"]
   ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: monitoring
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: alertmanager
-      ports:
+    - ports:
         - protocol: TCP
           port: 8080
 ---
