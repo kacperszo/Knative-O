@@ -248,15 +248,28 @@ wrong and are now fixed (verified against the live upstream):
   (`app.kubernetes.io/instance=astronomy-shop`) and by known name
   (`otel-collector`, `astronomy-shop-otel-collector`).
 - **Smoke phase 8 silently aborted** at the Prometheus check with no
-  message. Cause: `set -e + pipefail` + a `$(kubectl exec … | grep | wc -l)`
-  pipeline whose `kubectl exec` failed (recent kube-prometheus-stack
-  Prometheus images are distroless — no `wget`/`curl` inside the
-  container), which made the whole pipeline non-zero and killed the
-  script before the `|| fail` branch could fire. Rewrote both Prometheus
-  and agent health checks to use `kubectl get --raw` against the
-  apiserver Service/Pod proxy — no in-container client needed, the chart
-  Service is found by trying several label selectors, and the raw
-  response is included in the error message when it fails.
+  message. Two stacked causes: (a) `set -e + pipefail` + a
+  `$(kubectl exec … | grep | wc -l)` pipeline whose `kubectl exec` failed
+  (recent kube-prometheus-stack Prometheus images are distroless — no
+  `wget`/`curl` inside the container); (b) Service-proxy URLs use the
+  port *name*, not number, and the name varies across chart versions, so
+  even the rewrite tried `:9090` and got rejected. Rewrote both health
+  checks to use `kubectl get --raw` against the apiserver **pod** proxy
+  (accepts port numbers), with defensive `if !` blocks instead of
+  `var=$(…) || fail` (bash 3.2 on macOS has subtle set-e quirks with
+  command substitution). The raw apiserver response is included in any
+  error message.
+- **Prometheus knative-serving targets all DOWN** with
+  `connection refused` on `:9090`. The control plane pods existed and
+  Services advertised port 9090 → `http-metrics`, but **nothing was
+  listening inside the pods**. Cause: Knative 1.18+ renamed the
+  observability config keys. `metrics.backend-destination: "prometheus"`
+  is deprecated and silently ignored — control-plane components never
+  enabled the Prometheus exporter. Switched to the current keys
+  `metrics-protocol: prometheus` (control plane) and
+  `request-metrics-protocol: prometheus` (queue-proxy). `make
+  knative-restart` rolls the four control-plane Deployments so they
+  pick up the updated `config-observability` ConfigMap.
 - **`RuntimeError: ANTHROPIC_API_KEY is required for Claude models`** even
   with `OPENAI_API_KEY` set. Two stacked bugs: (1) bootstrap created the
   secret with `--from-literal=ANTHROPIC_API_KEY=""` when the env var was

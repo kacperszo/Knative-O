@@ -32,8 +32,11 @@ spec:
       kubernetes.podspec-tolerations: "enabled"
       kubernetes.podspec-nodeselector: "enabled"
     observability:
-      metrics.backend-destination: "prometheus"
-      metrics.request-metrics-backend-destination: "prometheus"
+      # Knative 1.18+ uses these keys. The old `metrics.backend-destination`
+      # is deprecated and silently ignored — that's why control-plane pods
+      # had connection refused on :9090 (they weren't listening at all).
+      metrics-protocol: "prometheus"
+      request-metrics-protocol: "prometheus"
       tracing.backend: "zipkin"
       tracing.zipkin-endpoint: "http://otel-collector.opentelemetry.svc.cluster.local:9411/api/v2/spans"
       tracing.sample-rate: "0.1"

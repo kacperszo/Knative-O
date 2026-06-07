@@ -18,6 +18,9 @@ smoke: ## Run the post-install checks
 agent-debug: ## Diagnose a stuck agent rollout (describe + logs + RBAC check)
 	bash scripts/agent-debug.sh
 
+knative-restart: ## Roll the Knative control plane to pick up config-observability changes
+	kubectl rollout restart -n knative-serving deployment/controller deployment/autoscaler deployment/activator deployment/webhook
+
 agent-dev: ## Run the agent locally against current kubeconfig (no docker)
 	cd agent && pip install -e . && knative-o-agent serve
 
