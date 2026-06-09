@@ -19,11 +19,15 @@ fi
 PROMPT="Update the Knative Service named ${TARGET} in namespace ${NS_APP} to scale out sooner under load.
 
 Step 1: Use resources_get to read the FULL current Service spec.
-Step 2: Modify spec.template.metadata.annotations to include exactly these key-value pairs (replace existing values where they differ):
-  autoscaling.knative.dev/target: \"50\"
-  autoscaling.knative.dev/max-scale: \"20\"
-  autoscaling.knative.dev/min-scale: \"0\"
-  autoscaling.knative.dev/metric: concurrency
+Step 2: Modify the spec as follows:
+  - Update spec.template.metadata.annotations to include:
+      autoscaling.knative.dev/target: \"50\"
+      autoscaling.knative.dev/max-scale: \"20\"
+      autoscaling.knative.dev/min-scale: \"0\"
+      autoscaling.knative.dev/metric: concurrency
+  - Reset spec.traffic to route 100% of traffic to the latest revision:
+      - latestRevision: true
+        percent: 100
 Preserve any other annotations that are already there.
 Step 3: Apply the FULL modified Service spec via resources_create_or_update. The body MUST include spec.template.spec.containers from step 1, otherwise the Knative webhook will reject it as invalid (containers cannot be null).
 
@@ -44,7 +48,29 @@ maxs=$(kubectl -n "${NS_APP}" get "ksvc/${TARGET}" \
 [[ "${maxs}" == "20" ]] || fail "max-scale annotation didn't change (got: '${maxs}')"
 
 ok "Scenario 3 complete — target=${after} max-scale=${maxs}"
-echo
-echo "In Grafana (make grafana → Knative-O — Revisions): the *Pods per"
-echo "revision* and *Request rate* panels for ${TARGET} react sooner now —"
-echo "the autoscaler adds a pod once concurrency goes above 50."
+
+info "Generating intense concurrent load for 45 seconds to break concurrency > 50..."
+URL=$(kubectl -n "${NS_APP}" get "ksvc/${TARGET}" -o jsonpath='{.status.url}')
+
+if [[ -z "${URL}" ]]; then
+  fail "Could not resolve Knative service external URL."
+fi
+
+log "  Target URL: ${URL}"
+log "  Spawning 75 tight parallel loops (no sleep) to force scale-out..."
+
+# Spawn 75 parallel background workers with zero sleep to maximize concurrent in-flight requests
+for worker in {1..75}; do
+  (
+    END_TIME=$((SECONDS + 45))
+    while [ $SECONDS -lt $END_TIME ]; do
+      curl -s -o /dev/null "$URL" || true
+    done
+  ) &
+done
+
+log "  Load active! Watch Grafana panel 'Concurrency: stable vs target'."
+log "  You should see the yellow line drop to 50, and the green line spike over it."
+wait
+
+ok "Load generation finished."
