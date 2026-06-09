@@ -40,6 +40,7 @@ PF_PID=$!
 trap "kill ${PF_PID} 2>/dev/null || true" EXIT
 sleep 2
 
+# We instruct the LLM to STRICTLY PRESERVE the top-level system annotations so the webhook stays happy.
 PAYLOAD=$(cat <<EOF
 {
   "version": "4",
@@ -57,14 +58,14 @@ PAYLOAD=$(cat <<EOF
     },
     "annotations": {
       "summary": "p95 latency on ${TARGET} is 1.4s, above the 1s SLO",
-      "remediation_hint": "raise max-scale and lower the concurrency target so it scales out sooner"
+      "remediation_hint": "raise max-scale and lower the concurrency target so it scales out sooner. MANDATORY REQUIREMENT: When updating the resource via resources_create_or_update, you MUST retain the entire top-level metadata.annotations map exactly as-is, including 'serving.knative.dev/creator' and 'serving.knative.dev/lastModifier'. Do not drop or omit these keys from your payload, or the Knative admission webhook will reject the update."
     }
   }]
 }
 EOF
 )
 
-info "Firing synthetic alert at the agent webhook…"
+info "Firing synthetic alert at the agent webhook..."
 HTTP_CODE=$(curl -s -o /tmp/alert-reply.json -w "%{http_code}" \
   -X POST http://localhost:18080/alerts \
   -H "Authorization: Bearer ${WEBHOOK_TOKEN}" \
@@ -76,7 +77,7 @@ if [[ "${HTTP_CODE}" != "202" ]]; then
   fail "Webhook rejected the alert (expected 202; got ${HTTP_CODE})"
 fi
 
-info "Watching for the agent's patch to land (up to 90 s)…"
+info "Watching for the agent's patch to land (up to 90 s)..."
 for _ in $(seq 1 18); do
   NEW_MAX=$(kubectl -n "${NS_APP}" get "ksvc/${TARGET}" \
     -o jsonpath='{.spec.template.metadata.annotations.autoscaling\.knative\.dev/max-scale}')
@@ -99,7 +100,7 @@ ok "Scenario 7 complete — closed loop verified"
 echo
 echo "What just happened:"
 echo "  Alertmanager → /alerts → agent (auto mode) → LLM proposed a patch →"
-echo "  agent applied it via MCP → ksvc/${TARGET} updated. No human in the loop."
+echo "  agent applied it via MCP stream → ksvc/${TARGET} updated. No human in the loop."
 echo
 echo "Agent transcript:"
 cat /tmp/alert-reply.json | (jq -r .reply 2>/dev/null || cat)
