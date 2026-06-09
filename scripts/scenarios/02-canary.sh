@@ -22,11 +22,14 @@ CURRENT_REV=$(kubectl -n "${NS_APP}" get "ksvc/${TARGET}" \
   -o jsonpath='{.status.latestReadyRevisionName}')
 log "  current ready revision: ${CURRENT_REV}"
 
+# Create a unique string using a timestamp to guarantee a new revision cuts every run
+RUN_ID=$(date +%s)
+
 PROMPT="Update the Knative Service named ${TARGET} in namespace ${NS_APP} to do a 90/10 canary traffic split.
 
 Step 1: Use the resources_get tool to read the FULL current Service spec.
 Step 2: Modify it as follows:
-  - Add or change spec.template.metadata.annotations to include canary.knative-o.dev/revision: v2 (this forces a new revision without changing the image).
+  - Add or change spec.template.metadata.annotations to include canary.knative-o.dev/revision: v-${RUN_ID} (this forces a new revision without changing the image).
   - Set spec.traffic to exactly this list of two entries:
       - revisionName: ${CURRENT_REV}
         percent: 90
@@ -58,6 +61,30 @@ done
 if [[ $(printf '%s\n' "${TRAFFIC}" | grep -c .) -lt 2 ]]; then
   fail "Traffic split not reflected after 2 min. Current status: ${TRAFFIC}"
 fi
+
+info "Generating concurrent load for 60 seconds to trigger autoscaling..."
+URL=$(kubectl -n "${NS_APP}" get "ksvc/${TARGET}" -o jsonpath='{.status.url}')
+
+if [[ -z "${URL}" ]]; then
+  fail "Could not resolve Knative service external URL."
+fi
+
+log "  Target URL: ${URL}"
+log "  Spawning 12 concurrent worker loops..."
+
+# Spawn parallel background loops using pure curl
+for worker in {1..12}; do
+  (
+    END_TIME=$((SECONDS + 60))
+    while [ $SECONDS -lt $END_TIME ]; do
+      curl -s -o /dev/null "$URL" || true
+      sleep 0.02
+    done
+  ) &
+done
+
+log "  Load generation active. Keep checking your Grafana dashboard!"
+wait # Blocks execution here until all 60-second background workers finish
 
 ok "Scenario 2 complete"
 echo
