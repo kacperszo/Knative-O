@@ -43,7 +43,7 @@ Bootstrap przechodzi przez 8 faz:
 2. Instaluje cert-manager
 3. Instaluje Knative Operator + KnativeServing + KnativeEventing
 4. Weryfikuje Kourier (ingress)
-5. Instaluje Prometheus + Grafana + OTel Operator + OTel Collector + Zipkin
+5. Instaluje Prometheus + Grafana + OTel Operator + OTel Collector + Zipkin + wgrywa dashboardy
 6. Buduje i ładuje obraz agenta LangChain do klastra
 7. Instaluje Astronomy Shop (Helm)
 8. Smoke test (4 testy: frontend, endpointy, Prometheus, agent)

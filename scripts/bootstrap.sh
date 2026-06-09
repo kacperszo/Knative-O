@@ -98,6 +98,11 @@ kubectl apply -f "${DEPLOY_DIR}/observability/alert-rules.yaml"
 
 wait_rollout deployment otel-collector opentelemetry 5m
 wait_rollout deployment zipkin opentelemetry 3m
+
+# Install the Knative-O Grafana dashboards as labelled ConfigMaps so the
+# Grafana sidecar auto-imports them.
+bash "${SCRIPT_DIR}/install-dashboards.sh"
+
 ok "Observability stack ready"
 
 # ----- Phase 6: MCP / agent -----
