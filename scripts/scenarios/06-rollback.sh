@@ -17,19 +17,37 @@ if ! kubectl -n "${NS_APP}" get "ksvc/${TARGET}" >/dev/null 2>&1; then
   fail "ksvc/${TARGET} doesn't exist."
 fi
 
-REVS=$(kubectl -n "${NS_APP}" get revision \
+# Fetch ONLY healthy (READY=True) revisions, sorted chronologically
+info "Scanning cluster for stable rollback targets..."
+HEALTHY_REVS=$(kubectl -n "${NS_APP}" get revision \
   -l "serving.knative.dev/service=${TARGET}" \
   --sort-by=.metadata.creationTimestamp \
-  -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
-COUNT=$(printf '%s\n' "${REVS}" | grep -c .)
+  -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' \
+  | grep "True" | awk '{print $1}' || true)
+
+COUNT=$(printf '%s\n' "${HEALTHY_REVS}" | grep -c .)
 if (( COUNT < 2 )); then
-  fail "${TARGET} has only ${COUNT} revision. Run scenario 2 first to create a v2."
+  fail "${TARGET} does not have enough healthy historical revisions to perform a rollback."
 fi
 
-PREV=$(printf '%s\n' "${REVS}" | tail -2 | head -1)
-LATEST=$(printf '%s\n' "${REVS}" | tail -1)
-log "  previous revision: ${PREV}"
-log "  latest revision:   ${LATEST}"
+# Safe targets pulled strictly from the healthy pool
+PREV=$(printf '%s\n' "${HEALTHY_REVS}" | tail -2 | head -1)
+LATEST=$(printf '%s\n' "${HEALTHY_REVS}" | tail -1)
+
+log "  target rollback revision (last stable): ${PREV}"
+log "  active latest revision:                 ${LATEST}"
+
+# --- AUTOMATIC TRAFFIC RESET ---
+info "Pre-resetting traffic to 100% on latest healthy revision (${LATEST}) to ensure a clean rollback transition..."
+kubectl patch ksvc "${TARGET}" -n "${NS_APP}" --type=json -p="[
+  {\"op\": \"replace\", \"path\": \"/spec/traffic\", \"value\": [{\"revisionName\": \"${LATEST}\", \"percent\": 100, \"latestRevision\": false}]}
+]" >/dev/null
+sleep 3
+
+log "Initial Knative Routing Table (Before Rollback):"
+kubectl -n "${NS_APP}" get ksvc "${TARGET}" -o jsonpath='{range .status.traffic[*]}    {.revisionName} takes {.percent}%{"\n"}{end}'
+echo
+# -------------------------------
 
 PROMPT="Roll back the Knative Service named ${TARGET} in namespace ${NS_APP} so that 100% of traffic goes to revision ${PREV}.
 
@@ -51,20 +69,29 @@ info "Waiting for traffic to settle on ${PREV}…"
 PCT=""
 for _ in $(seq 1 12); do
   PCT=$(kubectl -n "${NS_APP}" get "ksvc/${TARGET}" \
-    -o jsonpath="{.status.traffic[?(@.revisionName=='${PREV}')].percent}" 2>/dev/null || true)
+    -o jsonpath="{.spec.traffic[?(@.revisionName=='${PREV}')].percent}" 2>/dev/null || true)
   if [[ "${PCT}" == "100" ]]; then
-    ok "  100% traffic on ${PREV}"
+    ok "  100% traffic targeted at ${PREV}"
     break
   fi
-  log "  current ${PREV}: ${PCT:-?}%"
+  log "  current ${PREV} target: ${PCT:-0}%"
   sleep 5
 done
 
-if [[ "${PCT:-}" != "100" ]]; then
-  fail "Rollback didn't take. Final traffic state: $(kubectl -n ${NS_APP} get ksvc/${TARGET} -o jsonpath='{.status.traffic}')"
+# Check status.traffic to verify Knative successfully shifted routing engines
+info "Verifying routing state from Knative engine..."
+sleep 2
+FINAL_CHECK=$(kubectl -n "${NS_APP}" get "ksvc/${TARGET}" \
+  -o jsonpath="{.status.traffic[?(@.revisionName=='${PREV}')].percent}" 2>/dev/null || true)
+
+if [[ "${FINAL_CHECK}" != "100" ]]; then
+  fail "Rollback routing didn't take. Knative status: $(kubectl -n "${NS_APP}" get "ksvc/${TARGET}" -o jsonpath='{.status.traffic}')"
 fi
 
 ok "Scenario 6 complete"
 echo
+log "Final Knative Routing Table (After Rollback):"
+kubectl -n "${NS_APP}" get ksvc "${TARGET}" -o jsonpath='{range .status.traffic[*]}    {.revisionName} takes {.percent}%{"\n"}{end}'
+echo
 echo "In Grafana (make grafana → Knative-O — Revisions): request-rate line"
-echo "for ${LATEST} drops to zero while ${PREV} takes over."
+echo "for ${LATEST} drops to zero while ${PREV} takes over cleanly."
