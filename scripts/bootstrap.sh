@@ -77,7 +77,21 @@ helm upgrade --install otel-operator open-telemetry/opentelemetry-operator \
   --wait --timeout 5m
 wait_crd_established opentelemetrycollectors.opentelemetry.io
 
-kubectl apply -f "${DEPLOY_DIR}/observability/otel-collector.yaml"
+# The OTel Operator admission webhook takes additional time to become ready
+# after the Deployment becomes Available. The webhook pod's Deployment being
+# Available (--wait above) does not guarantee the TLS listener is open.
+# Retry the CR apply up to 18 times (3 minutes total) with 10s back-off.
+log "Waiting for OTel Operator webhook to be ready…"
+_otel_cr_applied=0
+for _i in $(seq 1 18); do
+  if kubectl apply -f "${DEPLOY_DIR}/observability/otel-collector.yaml" 2>/dev/null; then
+    _otel_cr_applied=1
+    break
+  fi
+  log "  Webhook not ready yet (attempt ${_i}/18), retrying in 10s…"
+  sleep 10
+done
+[[ "${_otel_cr_applied}" -eq 1 ]] || fail "OTel Operator webhook never became ready after 3 min"
 kubectl apply -f "${DEPLOY_DIR}/observability/zipkin.yaml"
 kubectl apply -f "${DEPLOY_DIR}/observability/servicemonitors.yaml"
 kubectl apply -f "${DEPLOY_DIR}/observability/alert-rules.yaml"
