@@ -591,7 +591,45 @@ Upgrades are performed by editing the version in `deploy/knative/serving.yaml` (
 
 ### 8a. Configuration Setup
 
+Before the demo can run, the operator configures the host and the cluster once. This step assumes the prerequisites in §7.2 are already installed (`docker`, `kind`, `kubectl`, `helm`, `kn`, `python`); it covers only the configuration specific to a demo run.
+
+**Environment file.** All secrets and run-time knobs are read from a single `.env` file at the repository root, copied from the tracked `.env.example` and never committed (§6.7). The bootstrap script fails fast in phase 0 if any required key is missing, before mutating the cluster. The variables consumed across the demo are:
+
+| Variable | Consumed by | Purpose |
+|----------|-------------|---------|
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | LangChain agent | LLM provider credentials; either provider can drive the agent (§2.1) |
+| `WEBHOOK_TOKEN` | `07-reactive.sh`, Alertmanager | Bearer token guarding the agent's `/alerts` webhook |
+| `GRAFANA_ADMIN_PASSWORD` | `make grafana` | Admin login for the Grafana port-forward |
+| `CLUSTER_NAME` | `make agent-load` | kind cluster the agent image is loaded into (defaults to `knative-o`) |
+| `KNATIVE_TARGET` | every scenario script | Name of the Knative Service under test (defaults to `currency-knative`) |
+| `AGENT_MODE` | agent `Deployment` | `confirm` (operator approves each patch) or `auto` (agent applies directly) |
+
+**Agent mode.** The single most important demo knob is `AGENT_MODE` (§6.5). For the narrated walk-through the agent runs in `confirm` mode so the operator can veto each proposed manifest; scenario #7 requires `auto` mode, and `07-reactive.sh` switches the `Deployment` to `auto` automatically (and waits for the rollout) if it finds the agent in `confirm`.
+
+**Bringing the platform up.** With `.env` in place the operator runs two targets in order:
+
+```bash
+make preflight     # phase 0: verify tools and a complete .env
+make bootstrap     # phases 1-9: idempotent install (§7.3)
+```
+
+`make bootstrap` is idempotent: a re-run after a failure resumes where it stopped, and a re-run on a healthy cluster is a no-op. A cold install takes about 10-15 minutes, dominated by image pulls in phase 7 (§7.3).
+
 ### 8b. Data Preparation
+
+With the platform installed, the demo needs two kinds of "data" before the live run: the **workload** that produces telemetry, and the **Knative Service** that every scenario operates on.
+
+**Workload and telemetry.** Phase 7 of `make bootstrap` deploys the Astronomy Shop: the end-user-facing services as Knative Services and the stateful components (Kafka, Valkey, Postgres, flagd) as ordinary `Deployment`s (§3.2). The bundled Locust `load-generator` then drives continuous traffic, so the OpenTelemetry, Prometheus and Grafana pipeline has live signals from the first minute. Three helper targets prepare the visualization layer and confirm the pipeline:
+
+```bash
+make dashboards    # provision the Knative-O Grafana dashboards
+make traffic       # 5 req/s for 2 min against currency-knative, so panels have data
+make smoke         # post-install checks: frontend reachable, metrics present in Prometheus
+```
+
+**The Service under test.** None of the platform services are the subject of the LLM scenarios; instead, scenario #1 (`make scenario-1`) creates a dedicated Knative Service, `currency-knative`, by wrapping the image and environment of the existing `currency` `Deployment` under a new name. The original `currency` `Deployment` and `Service` are left untouched so the shop keeps working: other services call `currency:8080` over gRPC, while a Knative cluster-local `Service` answers on `:80`. Because `currency-knative` is not wired into the checkout flow, it sits at zero replicas until a request reaches it through Kourier, which is exactly the property the scale-to-zero and autoscaling scenarios exploit.
+
+Running scenario #1 once is therefore part of data preparation: it establishes the object that scenarios #2 to #7 read, patch, scale, break, and roll back. The first deploy is the slowest step of the whole demo. On a laptop kind cluster the image pull dominates and the `Service` reaches `Ready=True` in a little over three minutes; every later cold start is far faster because the image is then cached on the node.
 
 ---
 
@@ -599,11 +637,64 @@ Upgrades are performed by editing the version in `deploy/knative/serving.yaml` (
 
 ### 9a. Execution Procedure
 
+The demo is a single narrated session driven by `make scenario-N` targets. The operator types nothing but natural-language prompts; every cluster mutation goes through the LLM/MCP path. The scenarios are ordered by dependency:
+
+- #1 establishes `currency-knative` and must run first.
+- #2, #3, #4 and #5 each require #1.
+- #6 requires #2, since it needs at least two healthy revisions to roll between.
+- #7 requires #1 and `AGENT_MODE=auto` (the script enforces this).
+
+Run them in numeric order for the cleanest narrative.
+
+**Scenario 1: Cold-start deployment** (`make scenario-1`). The script reads the image and full env of the `currency` `Deployment`, normalizes the env (it drops `fieldRef`-backed variables that would crash the C++ binary, and moves the OTel Prometheus exporter off port 9090 so it does not collide with the queue-proxy sidecar), and prompts the agent to create the Knative Service `currency-knative` with min-scale 0, max-scale 5 and a concurrency target of 100. The agent applies the manifest via `resources_create_or_update`; the script then `kubectl wait`s for `Ready=True` (up to four minutes) and, on failure, dumps revision conditions, pod env, logs and events for diagnosis.
+
+**Scenario 2: Canary traffic split** (`make scenario-2`). The script reads the current ready revision and prompts the agent to force a new revision (via a unique annotation, without changing the image) and to set `spec.traffic` to 90 % on the previous revision and 10 % on the latest. The agent must echo back the full spec including `spec.template.spec.containers`, or the Knative webhook rejects the update. The script polls `status.traffic` until two entries appear, then drives 60 seconds of concurrent load.
+
+**Scenario 3: Autoscaling tune** (`make scenario-3`). The agent is asked to make the `Service` scale out sooner: set `autoscaling.knative.dev/target: "50"`, `max-scale: "20"`, `min-scale: "0"` and `metric: concurrency`, and reset traffic to 100 % on the latest revision. The script asserts that the annotations actually changed (`target == 50`, `max-scale == 20`) and then spawns 75 tight parallel request loops for 45 seconds to push concurrency past the target and force a scale-out.
+
+**Scenario 4: Scale-to-zero proof** (`make scenario-4`, no LLM). This is the observation half. The script waits (up to two minutes) for `currency-knative` to fall to zero replicas while idle, then issues a single timed request through Kourier and measures how long the activator takes to wake a pod. Because `currency` speaks gRPC, the HTTP/1 probe returns a 4xx/5xx; the body is irrelevant, the point is that the activator booted a pod from zero. The probe is capped at 30 s, so this measures the warm-image wake, not the first image pull.
+
+**Scenario 5: Diagnosis** (`make scenario-5`). The script injects a fault by patching the `Service` to an image tag that does not exist, waits about 30 seconds for the new revision to fail, then asks the agent to diagnose: to read the `Service`, its latest `Revision`, the pods and recent events through MCP, and report in plain language what is broken and the minimal fix, **without applying any change**. The script then restores the good image. The agent reads only; it never mutates the cluster in this scenario.
+
+**Scenario 6: Rollback** (`make scenario-6`). The script scans for healthy (`Ready=True`) revisions, picks the last two, pre-resets traffic to 100 % on the latest, then prompts the agent to roll back so that 100 % of traffic goes to the previous healthy revision while preserving every other field. It polls both `spec.traffic` and `status.traffic` to confirm that the routing actually shifted, and prints the before/after routing tables.
+
+**Scenario 7: Reactive autoscale, closed-loop** (`make scenario-7`). The script ensures `AGENT_MODE=auto`, port-forwards the agent, and POSTs a synthetic Alertmanager `HighRequestLatency` payload (authenticated with `WEBHOOK_TOKEN`) to the `/alerts` webhook. The alert's `remediation_hint` instructs the LLM to raise `max-scale` and lower the concurrency target while strictly preserving the top-level system annotations. The script then watches the `Service` for up to 90 seconds for the agent's patch to land, with no human in the loop.
+
 ### 9b. Results Presentation
+
+Each scenario is verified twice: in the terminal, through the script's own assertions on cluster state, and in Grafana, through the runtime consequence on the *Knative-O* dashboards. The two views are complementary: the terminal proves the LLM applied the change, Grafana proves the cluster behaved as intended.
+
+**Scenario 1.** The `Service` reaches `Ready=True` and the *Pods per revision* panel shows the new revision sitting at zero replicas with no traffic. The first deploy takes a little over three minutes, dominated by the image pull on the kind node.
+
+**Scenario 2.** `status.traffic` reports two entries and a second revision appears for `currency-knative`. Under the generated load the two revisions split traffic **90 / 10** on the *Revision traffic share* panel, with the new canary revision taking the smaller 10 % share.
+
+**Scenario 3.** The terminal confirms the LLM set `target = 50` and `max-scale = 20`. On the *Knative-O* autoscaling dashboard the effect of the 75-worker burst is clear: *Concurrency: stable vs target* shows the measured concurrency (green) climbing to meet the target line, *Concurrency: panic-window measurement* spikes on the short window, and *Pods: desired vs actual* scales from 0 to 2, with desired leading and actual following once the pod starts. When the load stops, concurrency and pod count fall back toward zero. *Autoscaler in panic mode* stays at 0 for the sustained burst and *Knative control plane up* holds at 4/4 throughout.
+
+**Scenario 4.** *Total active pods* and *Pods per revision* drop to 0 after the scale-to-zero grace period, then step from 0 to 1 at the moment of the timed request as the activator wakes a pod; the pod falls back to 0 after about 30 to 60 seconds of idle. This is the cold-start moment that scenarios #1 and #4 exist to demonstrate.
+
+**Scenario 5.** The agent produces a correct, read-only diagnosis: it identifies that the latest revision (`currency-knative-00006`) is failing because its container image, `ghcr.io/open-telemetry/demo:does-not-exist`, cannot be pulled (404 Not Found), and proposes the minimal fix of pointing the template back at a valid image. The agent makes no cluster mutation; the script restores the good image afterwards. This is the clearest evidence that the LLM can walk `Service` -> `Revision` -> `Pod` -> events through MCP and reason about the result.
+
+**Scenario 6.** The agent shifts 100 % of traffic from the latest revision (`currency-knative-00007`) to the previous healthy one (`currency-knative-00004`), preserving all other fields. The terminal prints the after-rollback routing table (`currency-knative-00004 takes 100%`), and in Grafana's *Knative-O, Revisions* view the request-rate line for `-00007` drops to zero while `-00004` takes over cleanly. This run was driven through the OpenAI provider, confirming that the agent is model-agnostic.
+
+**Scenario 7.** The closed loop completes without a human: the webhook returns `202 Accepted` and, within the watch window, the agent applies the LLM's patch, moving `max-scale` from 20 to 30 and the concurrency target from 50 to 40. The agent's transcript states the rationale (raising max-scale and lowering the target so the `Service` scales out sooner under latency pressure) and silences the alert for ten minutes to observe the effect.
 
 ---
 
 ## 10. Summary and Conclusions
+
+This project set out to test whether an LLM, driving Knative through a Kubernetes MCP Server, can replace manual `kubectl`/YAML workflows for serverless application management, and whether a standard observability stack is enough to verify that the LLM did the right thing. Across the seven scenarios the answer is a qualified yes.
+
+**What was demonstrated.** Every mutating operation in the demo (cold-start deployment, canary split, autoscaling tune, diagnosis, rollback and reactive remediation) was performed end-to-end from natural-language prompts, with no hand-written `kubectl` mutating the cluster. The same observability pipeline that watches the application also made each LLM action visible: traffic shares, pod counts, concurrency-versus-target curves and control-plane health all moved on the Grafana dashboards within the Prometheus scrape interval, satisfying the acceptance criteria in §3.4.
+
+**LLM reliability.** Read-only and single-field operations were the most reliable. The diagnosis scenario (#5) was the strongest result: the model correctly localized an `ImagePullBackOff` to a non-existent image tag and proposed the minimal fix without touching the cluster. Traffic and autoscaling edits (#2, #3, #6) succeeded but were sensitive to one recurring failure class. The LLM tends to drop required fields when re-serializing a Knative manifest, most often `spec.template.spec.containers` and the system-managed top-level annotations (`serving.knative.dev/creator`, `serving.knative.dev/lastModifier`), which the admission webhook then rejects. The scenario prompts compensate with explicit, emphatic instructions to read the full spec first and preserve every field; this is the main piece of prompt engineering the demo depends on, and it is a genuine limitation of LLM-driven CRD editing rather than an artifact of the harness.
+
+The reactive scenario (#7) showed the same fragility at the edge of the loop: on the first attempt the webhook returned HTTP 500 and the run aborted; an immediate retry returned `202` and the agent applied the patch correctly (max-scale 20 to 30, target 50 to 40). Idempotent scripting and re-runs are therefore part of operating such a system, not an afterthought. The agent also ran interchangeably against both Claude and the OpenAI fallback, since the rollback transcript was produced via OpenAI, confirming the design is not tied to a single provider.
+
+**What observability caught, and what it did not.** The dashboards were sufficient to confirm every *successful* action: a missing traffic split or a stuck pod count would have been obvious within seconds. They were less useful for *diagnosing* failures. The autoscaling panels plot an effective concurrency target driven by the configured value and the autoscaler's utilization factor rather than the raw annotation, so verifying that the LLM set exactly `target = 50` required reading cluster state in the terminal rather than the chart. Likewise, the webhook rejection in #7 and the image-pull failure in #5 surfaced as events and HTTP status codes, not as a metric, confirming the project's hypothesis (§3.5) that some LLM mistakes are obvious from Grafana while others require reading raw events and logs.
+
+**Engineering lessons.** Wrapping an existing `Deployment` as a Knative `Service` is not mechanical. Environment variables backed by `fieldRef`, and an OTel Prometheus exporter bound to port 9090, both break under Knative (the latter collides with the queue-proxy sidecar) and had to be normalized before the agent's manifest would run. Forcing a new revision for the canary without changing the image required a throwaway annotation. None of these are LLM problems; they are the real friction of putting a polyglot microservice on a serverless platform, and exactly the kind of context an operator must still supply to the model.
+
+**Conclusion.** An LLM over MCP is a credible natural-language control plane for Knative: it removes the YAML-authoring burden and, paired with a feedback webhook, can even close the loop autonomously. It is not yet trustworthy unsupervised: the manifest-preservation failures and the need for retries argue for keeping `confirm` mode and idempotent tooling in any setting that matters. Observability is what makes the arrangement workable: it turns each prompt into a verifiable change, and it is the difference between trusting the model and checking it.
 
 ---
 
