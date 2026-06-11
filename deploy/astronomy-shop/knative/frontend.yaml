@@ -1,0 +1,74 @@
+# Reference Knative Service for the Astronomy Shop `frontend`.
+#
+# This is NOT applied by scripts/bootstrap.sh. It is:
+#   1. the "answer key" the LLM agent is expected to produce in demo
+#      scenario #1 ("put the frontend on Knative"), and
+#   2. a manual fallback you can `kubectl apply -f` yourself.
+#
+# CAVEAT (read before applying): Knative cluster-local Services answer on
+# port 80, but the Astronomy Shop services call each other on :8080
+# (e.g. frontend-proxy → frontend:8080). After converting `frontend`,
+# reach it through Kourier (the public route) rather than through
+# frontend-proxy, OR repoint frontend-proxy at the Knative route on port 80.
+# Converting a leaf service that nothing else calls avoids this entirely —
+# `currency` is the easiest first target for the live demo.
+#
+# Image tag must match ASTRONOMY_SHOP_VERSION in .env (chart appVersion).
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: astronomy-shop
+  annotations:
+    autoscaling.knative.dev/min-scale: "1"
+    autoscaling.knative.dev/max-scale: "10"
+    autoscaling.knative.dev/target: "100"
+    autoscaling.knative.dev/metric: concurrency
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/window: "60s"
+    spec:
+      containerConcurrency: 100
+      timeoutSeconds: 30
+      containers:
+        - name: frontend
+          image: ghcr.io/open-telemetry/demo:2.2.0-frontend
+          ports:
+            - name: http1
+              containerPort: 8080
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: frontend
+            - name: OTEL_COLLECTOR_NAME
+              value: otel-collector
+            - name: FRONTEND_PORT
+              value: "8080"
+            - name: FRONTEND_ADDR
+              value: ":8080"
+            - name: PORT
+              value: "8080"
+            - name: AD_ADDR
+              value: ad:8080
+            - name: CART_ADDR
+              value: cart:8080
+            - name: CHECKOUT_ADDR
+              value: checkout:8080
+            - name: CURRENCY_ADDR
+              value: currency:8080
+            - name: PRODUCT_CATALOG_ADDR
+              value: product-catalog:8080
+            - name: RECOMMENDATION_ADDR
+              value: recommendation:8080
+            - name: SHIPPING_ADDR
+              value: http://shipping:8080
+            - name: FLAGD_HOST
+              value: flagd
+            - name: FLAGD_PORT
+              value: "8013"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector:4317
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }

@@ -1,0 +1,42 @@
+---
+# Ingress on the agent's webhook port. Originally restricted to Alertmanager
+# only, but that also blocked apiserver pod-proxy traffic (used by `kubectl
+# get --raw .../proxy/...`, port-forward, smoke checks, agent-debug). For a
+# local demo we open port 8080 cluster-wide; /alerts is still protected by
+# the bearer-token check in the FastAPI app.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-ingress
+  namespace: mcp
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: langchain-agent
+  policyTypes: ["Ingress"]
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8080
+---
+# Allow agent egress everywhere. The original policy tried to be specific:
+# DNS, public 443 (LLM provider), and "default" ns for kube-apiserver. But
+# the apiserver isn't a pod in `default` — it's a host-network process in
+# kind — and its ClusterIP (10.96.0.1) falls inside the 10.0.0.0/8 except
+# block on the public-443 rule. Result: every MCP tool call timed out
+# trying to reach kubernetes.default.svc.
+#
+# Egress NetworkPolicy adds no real security value for a local demo; it
+# just blocks the agent from doing its job. Keep this permissive.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-egress
+  namespace: mcp
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: langchain-agent
+  policyTypes: ["Egress"]
+  egress:
+    - {}

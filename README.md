@@ -14,6 +14,10 @@ The goal of this project is to demonstrate **LLM-driven deployment and managemen
 
 The user issues natural-language commands to an LLM (e.g. Claude), which — through **LangChain** and a **Kubernetes MCP Server** — performs real operations on the cluster: deploying Knative Services, managing revisions, configuring traffic splitting, and adjusting autoscaling. The effects of these operations are then observed and visualized through the observability stack.
 
+> **Running the code:** for the *project document* keep reading. For
+> hands-on setup of the scaffold in this repo (`make bootstrap`,
+> verification, current TODOs) see **[`IMPLEMENTATION.md`](./IMPLEMENTATION.md)**.
+
 ---
 
 ## Table of Contents

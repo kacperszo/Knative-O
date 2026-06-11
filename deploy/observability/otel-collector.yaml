@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opentelemetry
+---
+# Receives OTLP from app SDKs and Knative tracing, fans out to Prometheus
+# (via /metrics scrape) and Zipkin (traces). See §5.1 / §6.4.
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel
+  namespace: opentelemetry
+spec:
+  mode: deployment
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  ports:
+    - name: zipkin
+      port: 9411
+      protocol: TCP
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+      zipkin:
+        # Knative emits Zipkin format directly; we expose this so we can keep
+        # one tracing pipeline regardless of source.
+        endpoint: 0.0.0.0:9411
+    processors:
+      batch:
+        send_batch_size: 1024
+        timeout: 5s
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+      resource:
+        attributes:
+          - key: cluster
+            value: knative-o
+            action: upsert
+    exporters:
+      prometheus:
+        endpoint: 0.0.0.0:8889
+        send_timestamps: true
+        resource_to_telemetry_conversion:
+          enabled: true
+      zipkin:
+        endpoint: http://zipkin.opentelemetry.svc.cluster.local:9411/api/v2/spans
+      debug:
+        verbosity: basic
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp, zipkin]
+          processors: [memory_limiter, resource, batch]
+          exporters: [zipkin]
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, resource, batch]
+          exporters: [prometheus]
+      telemetry:
+        logs:
+          level: info

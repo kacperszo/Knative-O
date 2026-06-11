@@ -1,0 +1,71 @@
+---
+# Scrape Knative Serving control plane.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: knative-serving
+  namespace: monitoring
+  labels:
+    prometheus: prom
+spec:
+  namespaceSelector:
+    matchNames: ["knative-serving"]
+  selector:
+    matchExpressions:
+      - { key: app, operator: In, values: [activator, autoscaler, controller, webhook] }
+  endpoints:
+    - port: http-metrics
+      interval: 15s
+    - port: metrics
+      interval: 15s
+---
+# Scrape queue-proxy sidecars (per-revision request metrics).
+# Earlier selector had `matchLabels: { serving.knative.dev/revisionUID: "" }`
+# which means "label value must equal empty string" — that matches zero pods.
+# Drop the matchLabels and keep only the Exists matchExpression.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: queue-proxy
+  namespace: monitoring
+  labels:
+    prometheus: prom
+spec:
+  namespaceSelector:
+    matchNames: ["astronomy-shop"]
+  selector:
+    matchExpressions:
+      - { key: serving.knative.dev/revisionUID, operator: Exists }
+  podMetricsEndpoints:
+    # In Knative 1.19 the queue-proxy container exposes two metric ports:
+    #   http-usermetric  (9090) — own queue-proxy metrics
+    #   http-autometric  (9091) — request metrics (request count, latencies)
+    # Port names vary across versions; list both, Prometheus skips the one
+    # that isn't declared on the container.
+    - port: http-usermetric
+      interval: 15s
+      path: /metrics
+    - port: http-autometric
+      interval: 15s
+      path: /metrics
+---
+# Scrape the OTel Collector's Prometheus exporter (app metrics) and its
+# own self-metrics.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: otel-collector
+  namespace: monitoring
+  labels:
+    prometheus: prom
+spec:
+  namespaceSelector:
+    matchNames: ["opentelemetry"]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: otel-collector
+  endpoints:
+    - port: prometheus
+      interval: 15s
+    - port: monitoring
+      interval: 30s

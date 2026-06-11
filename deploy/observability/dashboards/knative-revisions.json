@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 39,
+  "version": 2,
+  "uid": "knative-o-revisions",
+  "title": "Knative-O — Revisions",
+  "tags": ["knative", "knative-o"],
+  "timezone": "browser",
+  "time": {"from": "now-15m", "to": "now"},
+  "refresh": "10s",
+  "annotations": {"list": []},
+  "templating": {"list": []},
+  "panels": [
+    {
+      "id": 1,
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "title": "Total active pods",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "targets": [{
+        "expr": "sum(kn_revision_pods_count__pod_)",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 2,
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "title": "Distinct revisions seen by autoscaler",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "targets": [{
+        "expr": "count(count by (revision_name) (kn_revision_pods_count__pod_))",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 3,
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "title": "Autoscaler in panic mode (1 = yes)",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}},
+      "targets": [{
+        "expr": "max(kn_revision_panic_mode)",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 4,
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "title": "Knative control plane up (out of 4)",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 1}, {"color": "green", "value": 4}]}}},
+      "targets": [{
+        "expr": "sum(up{namespace=\"knative-serving\"})",
+        "refId": "A"
+      }]
+    },
+
+    {
+      "id": 10,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "title": "Pods per revision (actual)",
+      "description": "kn_revision_pods_count__pod_ — what autoscaler sees alive right now. Jumps 0→1 on cold start, drops on scale-to-zero.",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [{
+        "expr": "sum by (revision_name) (kn_revision_pods_count__pod_)",
+        "legendFormat": "{{revision_name}}",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 11,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "title": "Pods: desired vs actual",
+      "description": "Distance between desired (autoscaler decision) and actual (kubelet reality). Sustained gap = scheduling/image-pull lag.",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum by (revision_name) (kn_revision_pods_desired__item_)",
+          "legendFormat": "desired {{revision_name}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (revision_name) (kn_revision_pods_count__pod_)",
+          "legendFormat": "actual {{revision_name}}",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 12,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "title": "Concurrency: stable vs target",
+      "description": "stable = current request concurrency the autoscaler is measuring. target = the value from autoscaling.knative.dev/target. When stable > target, autoscaler adds pods.",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "max by (revision_name) (kn_revision_concurrency_stable__concurrency_)",
+          "legendFormat": "stable {{revision_name}}",
+          "refId": "A"
+        },
+        {
+          "expr": "max by (revision_name) (kn_revision_concurrency_target__concurrency_)",
+          "legendFormat": "target {{revision_name}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "title": "Concurrency: panic-window measurement",
+      "description": "kn_revision_concurrency_panic — the shorter-window average used when autoscaler enters panic mode (sudden surge).",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [{
+        "expr": "max by (revision_name) (kn_revision_concurrency_panic__concurrency_)",
+        "legendFormat": "{{revision_name}}",
+        "refId": "A"
+      }]
+    },
+
+    {
+      "id": 20,
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 20},
+      "title": "Pod lifecycle counts per revision",
+      "description": "Snapshot of pod phases for each revision; useful during cold start / image pull / crash loop.",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum by (revision_name) (kn_revision_pods_pending_count__pod_)",
+          "legendFormat": "pending {{revision_name}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (revision_name) (kn_revision_pods_not_ready_count__pod_)",
+          "legendFormat": "notready {{revision_name}}",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (revision_name) (kn_revision_pods_terminating_count__pod_)",
+          "legendFormat": "terminating {{revision_name}}",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 20},
+      "title": "Knative control plane reachability",
+      "description": "up{namespace=knative-serving} — one line per Knative control-plane Deployment (activator, autoscaler, controller, webhook).",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {"min": 0, "max": 1}},
+      "targets": [{
+        "expr": "up{namespace=\"knative-serving\"}",
+        "legendFormat": "{{job}}",
+        "refId": "A"
+      }]
+    }
+  ]
+}

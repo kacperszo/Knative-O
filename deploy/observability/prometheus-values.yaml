@@ -1,0 +1,83 @@
+# Helm values for prometheus-community/kube-prometheus-stack.
+# Sized for the demo (see §6.1 disk budget).
+
+fullnameOverride: prom
+
+prometheus:
+  prometheusSpec:
+    retention: 2h
+    retentionSize: "1GB"
+    scrapeInterval: "15s"
+    evaluationInterval: "15s"
+    # We add ServiceMonitors from deploy/observability/servicemonitors.yaml,
+    # so don't restrict by Helm-managed selector.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 2Gi
+
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+  config:
+    route:
+      receiver: "knative-o-agent"
+      group_by: ["alertname", "namespace"]
+      group_wait: 10s
+      group_interval: 30s
+      repeat_interval: 5m
+      routes:
+        - matchers:
+            - severity = "info"
+          receiver: "null"
+    receivers:
+      - name: "null"
+      - name: "knative-o-agent"
+        webhook_configs:
+          - url: "http://langchain-agent.mcp.svc.cluster.local:8080/alerts"
+            send_resolved: true
+            http_config:
+              # Bearer token is the shared secret in deploy/mcp/secret.yaml.
+              authorization:
+                type: Bearer
+                credentials_file: /etc/alertmanager/secrets/webhook-token/token
+
+grafana:
+  adminPassword: "${GRAFANA_ADMIN_PASSWORD}"
+  defaultDashboardsTimezone: browser
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+    datasources:
+      enabled: true
+
+# We bring our own node-exporter via the OTel Collector DaemonSet (host metrics
+# receiver), so disable the bundled one to avoid double-scrape.
+nodeExporter:
+  enabled: false
+
+# Kube-state-metrics stays on — Prometheus needs it for Kubernetes object state.
+kube-state-metrics:
+  enabled: true

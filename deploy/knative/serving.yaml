@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: knative-serving
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: operator.knative.dev/v1beta1
+kind: KnativeServing
+metadata:
+  name: knative-serving
+  namespace: knative-serving
+spec:
+  # Bumped quarterly to track latest stable; see §6.1.
+  version: "1.19"
+  ingress:
+    kourier:
+      enabled: true
+  config:
+    network:
+      ingress-class: "kourier.ingress.networking.knative.dev"
+    autoscaler:
+      enable-scale-to-zero: "true"
+      scale-to-zero-grace-period: "30s"
+      stable-window: "60s"
+      container-concurrency-target-default: "100"
+    domain:
+      # Local default; the bootstrap script rewrites this for the cloud variant.
+      "127.0.0.1.nip.io": ""
+    features:
+      kubernetes.podspec-affinity: "enabled"
+      kubernetes.podspec-tolerations: "enabled"
+      kubernetes.podspec-nodeselector: "enabled"
+    observability:
+      # Knative 1.18+ uses these keys. The old `metrics.backend-destination`
+      # is deprecated and silently ignored — that's why control-plane pods
+      # had connection refused on :9090 (they weren't listening at all).
+      metrics-protocol: "prometheus"
+      request-metrics-protocol: "prometheus"
+      tracing.backend: "zipkin"
+      tracing.zipkin-endpoint: "http://otel-collector.opentelemetry.svc.cluster.local:9411/api/v2/spans"
+      tracing.sample-rate: "0.1"

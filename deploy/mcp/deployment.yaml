@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: langchain-agent
+  namespace: mcp
+  labels:
+    app.kubernetes.io/name: langchain-agent
+    app.kubernetes.io/component: agent
+spec:
+  replicas: 1
+  strategy:
+    # RollingUpdate: spin up the new pod first, wait for /readyz, then kill
+    # the old one. Recreate forced an empty window while the old (often
+    # broken) pod terminated before the new one even started — fine for
+    # state, but bad UX because wait_rollout timed out mid-rollover.
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: langchain-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: langchain-agent
+    spec:
+      serviceAccountName: langchain-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: agent
+          # Built and loaded into kind by scripts/bootstrap.sh (local target),
+          # or overridden to a registry ref via AGENT_IMAGE (cloud target).
+          image: knative-o-agent:local
+          imagePullPolicy: IfNotPresent
+          args: ["serve"]
+          ports:
+            - name: webhook
+              containerPort: 8080
+          env:
+            - name: LLM_MODEL
+              value: gpt-4o
+            - name: AGENT_MODE
+              value: confirm
+            - name: DEMO_NAMESPACE
+              value: astronomy-shop
+            # The agent launches `kubernetes-mcp-server` over stdio (the binary
+            # is baked into the image). Force in-cluster auth — auto-detection
+            # can fail with "no configuration has been provided".
+            - name: MCP_CLUSTER_PROVIDER
+              value: in-cluster
+            - name: ANTHROPIC_API_KEY
+              valueFrom: { secretKeyRef: { name: agent-secrets, key: ANTHROPIC_API_KEY, optional: true } }
+            - name: OPENAI_API_KEY
+              valueFrom: { secretKeyRef: { name: agent-secrets, key: OPENAI_API_KEY, optional: true } }
+            - name: WEBHOOK_TOKEN
+              valueFrom: { secretKeyRef: { name: agent-secrets, key: WEBHOOK_TOKEN } }
+            - name: LANGCHAIN_TRACING_V2
+              value: "false"
+            - name: LANGCHAIN_API_KEY
+              valueFrom: { secretKeyRef: { name: agent-secrets, key: LANGCHAIN_API_KEY, optional: true } }
+          # /healthz only checks the process is up; uvicorn binds immediately,
+          # so liveness goes green within seconds. We do NOT want MCP problems
+          # to CrashLoop the pod — we want it staying up so you can read logs.
+          livenessProbe:
+            httpGet: { path: /healthz, port: webhook }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 5
+          # /readyz is gated on agent init (MCP subprocess + tool listing).
+          # The deployment becomes Available only once that succeeds; if it
+          # fails, the pod stays running so `kubectl logs` shows the cause.
+          readinessProbe:
+            httpGet: { path: /readyz, port: webhook }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 60   # ≈ 5 min before deployment progress deadline trips
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
